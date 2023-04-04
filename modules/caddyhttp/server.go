@@ -243,6 +243,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	repl := caddy.NewReplacer()
 	r = PrepareRequest(r, repl, w, s)
 
+	// enable full-duplex for HTTP/1, ensuring the entire
+	// request body gets consumed before writing the response
+	// TODO: This should be made configurable (opt-in)
+	http.NewResponseController(w).EnableFullDuplex()
+
 	// encode the request for logging purposes before
 	// it enters any handler chain; this is necessary
 	// to capture the original request in case it gets
