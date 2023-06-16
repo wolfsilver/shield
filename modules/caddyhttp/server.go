@@ -234,7 +234,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Server", "Caddy")
+	w.Header().Set("Server", "Shield")
 
 	// advertise HTTP/3, if enabled
 	if s.h3server != nil {
