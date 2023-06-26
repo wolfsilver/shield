@@ -17,6 +17,8 @@
 		+Link "Foo"
 		+Link "Bar"
 	}
+	header >Set Defer
+	header >Replace Deferred Replacement
 }
 ----------
 {
@@ -133,6 +135,31 @@
 											"Link": [
 												"Foo",
 												"Bar"
+											]
+										}
+									}
+								},
+								{
+									"handler": "headers",
+									"response": {
+										"deferred": true,
+										"set": {
+											"Set": [
+												"Defer"
+											]
+										}
+									}
+								},
+								{
+									"handler": "headers",
+									"response": {
+										"deferred": true,
+										"replace": {
+											"Replace": [
+												{
+													"replace": "Replacement",
+													"search_regexp": "Deferred"
+												}
 											]
 										}
 									}

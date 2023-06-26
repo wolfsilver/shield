@@ -39,9 +39,16 @@ func init() {
 // TLS provides TLS facilities including certificate
 // loading and management, client auth, and more.
 type TLS struct {
-	// Caches certificates in memory for quick use during
+	// Certificates to load into memory for quick recall during
 	// TLS handshakes. Each key is the name of a certificate
-	// loader module. All loaded certificates get pooled
+	// loader module.
+	//
+	// The "automate" certificate loader module can be used to
+	// specify a list of subjects that need certificates to be
+	// managed automatically. The first matching automation
+	// policy will be applied to manage the certificate(s).
+	//
+	// All loaded certificates get pooled
 	// into the same cache and may be used to complete TLS
 	// handshakes for the relevant server names (SNI).
 	// Certificates loaded manually (anything other than
@@ -126,7 +133,12 @@ func (t *TLS) Provision(ctx caddy.Context) error {
 			// special case; these will be loaded in later using our automation facilities,
 			// which we want to avoid doing during provisioning
 			if automateNames, ok := modIface.(*AutomateLoader); ok && automateNames != nil {
-				t.automateNames = []string(*automateNames)
+				repl := caddy.NewReplacer()
+				subjects := make([]string, len(*automateNames))
+				for i, sub := range *automateNames {
+					subjects[i] = repl.ReplaceAll(sub, "")
+				}
+				t.automateNames = subjects
 			} else {
 				return fmt.Errorf("loading certificates with 'automate' requires array of strings, got: %T", modIface)
 			}
@@ -181,8 +193,8 @@ func (t *TLS) Provision(ctx caddy.Context) error {
 		onDemandRateLimiter.SetWindow(time.Duration(t.Automation.OnDemand.RateLimit.Interval))
 	} else {
 		// remove any existing rate limiter
-		onDemandRateLimiter.SetMaxEvents(0)
 		onDemandRateLimiter.SetWindow(0)
+		onDemandRateLimiter.SetMaxEvents(0)
 	}
 
 	// run replacer on ask URL (for environment variables) -- return errors to prevent surprises (#5036)
@@ -231,13 +243,13 @@ func (t *TLS) Validate() error {
 		var hasDefault bool
 		hostSet := make(map[string]int)
 		for i, ap := range t.Automation.Policies {
-			if len(ap.Subjects) == 0 {
+			if len(ap.subjects) == 0 {
 				if hasDefault {
 					return fmt.Errorf("automation policy %d is the second policy that acts as default/catch-all, but will never be used", i)
 				}
 				hasDefault = true
 			}
-			for _, h := range ap.Subjects {
+			for _, h := range ap.subjects {
 				if first, ok := hostSet[h]; ok {
 					return fmt.Errorf("automation policy %d: cannot apply more than one automation policy to host: %s (first match in policy %d)", i, h, first)
 				}
@@ -259,7 +271,7 @@ func (t *TLS) Start() error {
 	if t.Automation.OnDemand == nil ||
 		(t.Automation.OnDemand.Ask == "" && t.Automation.OnDemand.RateLimit == nil) {
 		for _, ap := range t.Automation.Policies {
-			if ap.OnDemand {
+			if ap.OnDemand && ap.isWildcardOrDefault() {
 				t.logger.Warn("YOUR SERVER MAY BE VULNERABLE TO ABUSE: on-demand TLS is enabled, but no protections are in place",
 					zap.String("docs", "https://caddyserver.com/docs/automatic-https#on-demand-tls"))
 				break
@@ -388,8 +400,8 @@ func (t *TLS) AddAutomationPolicy(ap *AutomationPolicy) error {
 		// first see if existing is superset of ap for all names
 		var otherIsSuperset bool
 	outer:
-		for _, thisSubj := range ap.Subjects {
-			for _, otherSubj := range existing.Subjects {
+		for _, thisSubj := range ap.subjects {
+			for _, otherSubj := range existing.subjects {
 				if certmagic.MatchWildcard(thisSubj, otherSubj) {
 					otherIsSuperset = true
 					break outer
@@ -398,7 +410,7 @@ func (t *TLS) AddAutomationPolicy(ap *AutomationPolicy) error {
 		}
 		// if existing AP is a superset or if it contains fewer names (i.e. is
 		// more general), then new AP is more specific, so insert before it
-		if otherIsSuperset || len(existing.Subjects) < len(ap.Subjects) {
+		if otherIsSuperset || len(existing.SubjectsRaw) < len(ap.SubjectsRaw) {
 			t.Automation.Policies = append(t.Automation.Policies[:i],
 				append([]*AutomationPolicy{ap}, t.Automation.Policies[i:]...)...)
 			return nil
@@ -420,10 +432,10 @@ func (t *TLS) getConfigForName(name string) *certmagic.Config {
 // public certificate or not.
 func (t *TLS) getAutomationPolicyForName(name string) *AutomationPolicy {
 	for _, ap := range t.Automation.Policies {
-		if len(ap.Subjects) == 0 {
+		if len(ap.subjects) == 0 {
 			return ap // no host filter is an automatic match
 		}
-		for _, h := range ap.Subjects {
+		for _, h := range ap.subjects {
 			if certmagic.MatchWildcard(name, h) {
 				return ap
 			}
@@ -552,7 +564,9 @@ type Certificate struct {
 //
 // Technically, this is a no-op certificate loader module that is treated as
 // a special case: it uses this app's automation features to load certificates
-// for the list of hostnames, rather than loading certificates manually.
+// for the list of hostnames, rather than loading certificates manually. But
+// the end result is the same: certificates for these subject names will be
+// loaded into the in-memory cache and may then be used.
 type AutomateLoader []string
 
 // CaddyModule returns the Caddy module information.

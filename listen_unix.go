@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO: Go 1.19 introduced the "unix" build tag. We have to support Go 1.18 until Go 1.20 is released.
-// When Go 1.19 is our minimum, remove this build tag, since "_unix" in the filename will do this.
-// (see also change needed in listen.go)
-//go:build aix || android || darwin || dragonfly || freebsd || hurd || illumos || ios || linux || netbsd || openbsd || solaris
+// Even though the filename ends in _unix.go, we still have to specify the
+// build constraint here, because the filename convention only works for
+// literal GOOS values, and "unix" is a shortcut unique to build tags.
+//go:build unix
 
 package caddy
 
@@ -98,7 +98,28 @@ func listenTCPOrUnix(ctx context.Context, lnKey string, network, address string,
 		}
 		return reusePort(network, address, c)
 	}
-	return config.Listen(ctx, network, address)
+
+	// even though SO_REUSEPORT lets us bind the socket multiple times,
+	// we still put it in the listenerPool so we can count how many
+	// configs are using this socket; necessary to ensure we can know
+	// whether to enforce shutdown delays, for example (see #5393).
+	ln, err := config.Listen(ctx, network, address)
+	if err == nil {
+		listenerPool.LoadOrStore(lnKey, nil)
+	}
+
+	// if new listener is a unix socket, make sure we can reuse it later
+	// (we do our own "unlink on close" -- not required, but more tidy)
+	one := int32(1)
+	if unix, ok := ln.(*net.UnixListener); ok {
+		unix.SetUnlinkOnClose(false)
+		ln = &unixListener{unix, lnKey, &one}
+		unixSockets[lnKey] = ln.(*unixListener)
+	}
+
+	// lightly wrap the listener so that when it is closed,
+	// we can decrement the usage pool counter
+	return deleteListener{ln, lnKey}, err
 }
 
 // reusePort sets SO_REUSEPORT. Ineffective for unix sockets.
@@ -107,7 +128,7 @@ func reusePort(network, address string, conn syscall.RawConn) error {
 		return nil
 	}
 	return conn.Control(func(descriptor uintptr) {
-		if err := unix.SetsockoptInt(int(descriptor), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); err != nil {
+		if err := unix.SetsockoptInt(int(descriptor), unix.SOL_SOCKET, unixSOREUSEPORT, 1); err != nil {
 			Log().Error("setting SO_REUSEPORT",
 				zap.String("network", network),
 				zap.String("address", address),
@@ -115,4 +136,38 @@ func reusePort(network, address string, conn syscall.RawConn) error {
 				zap.Error(err))
 		}
 	})
+}
+
+type unixListener struct {
+	*net.UnixListener
+	mapKey string
+	count  *int32 // accessed atomically
+}
+
+func (uln *unixListener) Close() error {
+	newCount := atomic.AddInt32(uln.count, -1)
+	if newCount == 0 {
+		defer func() {
+			addr := uln.Addr().String()
+			unixSocketsMu.Lock()
+			delete(unixSockets, uln.mapKey)
+			unixSocketsMu.Unlock()
+			_ = syscall.Unlink(addr)
+		}()
+	}
+	return uln.UnixListener.Close()
+}
+
+// deleteListener is a type that simply deletes itself
+// from the listenerPool when it closes. It is used
+// solely for the purpose of reference counting (i.e.
+// counting how many configs are using a given socket).
+type deleteListener struct {
+	net.Listener
+	lnKey string
+}
+
+func (dl deleteListener) Close() error {
+	_, _ = listenerPool.Delete(dl.lnKey)
+	return dl.Listener.Close()
 }

@@ -1,6 +1,7 @@
 package httpcaddyfile
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -209,6 +210,69 @@ func TestRedirDirectiveSyntax(t *testing.T) {
 
 		if err != nil != tc.expectError {
 			t.Errorf("Test %d error expectation failed Expected: %v, got %s", i, tc.expectError, err)
+			continue
+		}
+	}
+}
+
+func TestImportErrorLine(t *testing.T) {
+	for i, tc := range []struct {
+		input     string
+		errorFunc func(err error) bool
+	}{
+		{
+			input: `(t1) {
+					abort {args[:]}
+				}
+				:8080 {
+					import t1
+					import t1 true
+				}`,
+			errorFunc: func(err error) bool {
+				return err != nil && strings.Contains(err.Error(), "Caddyfile:6 (import t1)")
+			},
+		},
+		{
+			input: `(t1) {
+					abort {args[:]}
+				}
+				:8080 {
+					import t1 true
+				}`,
+			errorFunc: func(err error) bool {
+				return err != nil && strings.Contains(err.Error(), "Caddyfile:5 (import t1)")
+			},
+		},
+		{
+			input: `
+				import testdata/import_variadic_snippet.txt
+				:8080 {
+					import t1 true
+				}`,
+			errorFunc: func(err error) bool {
+				return err == nil
+			},
+		},
+		{
+			input: `
+				import testdata/import_variadic_with_import.txt
+				:8080 {
+					import t1 true
+					import t2 true
+				}`,
+			errorFunc: func(err error) bool {
+				return err == nil
+			},
+		},
+	} {
+		adapter := caddyfile.Adapter{
+			ServerType: ServerType{},
+		}
+
+		_, _, err := adapter.Adapt([]byte(tc.input), nil)
+
+		if !tc.errorFunc(err) {
+			t.Errorf("Test %d error expectation failed, got %s", i, err)
 			continue
 		}
 	}

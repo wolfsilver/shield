@@ -191,15 +191,17 @@ func (m MatchExpression) caddyPlaceholderFunc(lhs, rhs ref.Val) ref.Val {
 	celReq, ok := lhs.(celHTTPRequest)
 	if !ok {
 		return types.NewErr(
-			"invalid request of type '%v' to "+placeholderFuncName+"(request, placeholderVarName)",
+			"invalid request of type '%v' to %s(request, placeholderVarName)",
 			lhs.Type(),
+			placeholderFuncName,
 		)
 	}
 	phStr, ok := rhs.(types.String)
 	if !ok {
 		return types.NewErr(
-			"invalid placeholder variable name of type '%v' to "+placeholderFuncName+"(request, placeholderVarName)",
+			"invalid placeholder variable name of type '%v' to %s(request, placeholderVarName)",
 			rhs.Type(),
+			placeholderFuncName,
 		)
 	}
 
@@ -253,7 +255,10 @@ type celPkixName struct{ *pkix.Name }
 func (pn celPkixName) ConvertToNative(typeDesc reflect.Type) (any, error) {
 	return pn.Name, nil
 }
-func (celPkixName) ConvertToType(typeVal ref.Type) ref.Val {
+func (pn celPkixName) ConvertToType(typeVal ref.Type) ref.Val {
+	if typeVal.TypeName() == "string" {
+		return types.String(pn.Name.String())
+	}
 	panic("not implemented")
 }
 func (pn celPkixName) Equal(other ref.Val) ref.Val {
@@ -491,7 +496,7 @@ func celMatcherStringMacroExpander(funcName string) parser.MacroExpander {
 	}
 }
 
-// celMatcherStringMacroExpander validates that the macro is called a single
+// celMatcherJSONMacroExpander validates that the macro is called a single
 // map literal argument.
 //
 // The following function call is returned: <funcName>(request, arg)

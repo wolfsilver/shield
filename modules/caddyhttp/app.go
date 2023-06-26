@@ -232,6 +232,11 @@ func (app *App) Provision(ctx caddy.Context) error {
 			srv.trustedProxies = val.(IPRangeSource)
 		}
 
+		// set the default client IP header to read from
+		if srv.ClientIPHeaders == nil {
+			srv.ClientIPHeaders = []string{"X-Forwarded-For"}
+		}
+
 		// process each listener address
 		for i := range srv.Listen {
 			lnOut, err := repl.ReplaceOrErr(srv.Listen[i], true, true)
@@ -288,9 +293,17 @@ func (app *App) Provision(ctx caddy.Context) error {
 		if srv.Errors != nil {
 			err := srv.Errors.Routes.Provision(ctx)
 			if err != nil {
-				return fmt.Errorf("server %s: setting up server error handling routes: %v", srvName, err)
+				return fmt.Errorf("server %s: setting up error handling routes: %v", srvName, err)
 			}
 			srv.errorHandlerChain = srv.Errors.Routes.Compile(errorEmptyHandler)
+		}
+
+		// provision the named routes (they get compiled at runtime)
+		for name, route := range srv.NamedRoutes {
+			err := route.Provision(ctx, srv.Metrics)
+			if err != nil {
+				return fmt.Errorf("server %s: setting up named route '%s' handlers: %v", name, srvName, err)
+			}
 		}
 
 		// prepare the TLS connection policies
@@ -352,6 +365,14 @@ func (app *App) Start() error {
 			MaxHeaderBytes:    srv.MaxHeaderBytes,
 			Handler:           srv,
 			ErrorLog:          serverLogger,
+			ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+				return context.WithValue(ctx, ConnCtxKey, c)
+			},
+		}
+		h2server := &http2.Server{
+			NewWriteScheduler: func() http2.WriteScheduler {
+				return http2.NewPriorityWriteScheduler(nil)
+			},
 		}
 
 		// disable HTTP/2, which we enabled by default during provisioning
@@ -373,6 +394,9 @@ func (app *App) Start() error {
 					}
 				}
 			}
+		} else {
+			//nolint:errcheck
+			http2.ConfigureServer(srv.server, h2server)
 		}
 
 		// this TLS config is used by the std lib to choose the actual TLS config for connections
@@ -382,9 +406,6 @@ func (app *App) Start() error {
 
 		// enable H2C if configured
 		if srv.protocol("h2c") {
-			h2server := &http2.Server{
-				IdleTimeout: time.Duration(srv.IdleTimeout),
-			}
 			srv.server.Handler = h2c.NewHandler(srv, h2server)
 		}
 
@@ -449,6 +470,17 @@ func (app *App) Start() error {
 				// finish wrapping listener where we left off before TLS
 				for i := lnWrapperIdx; i < len(srv.listenerWrappers); i++ {
 					ln = srv.listenerWrappers[i].WrapListener(ln)
+				}
+
+				// handle http2 if use tls listener wrapper
+				if useTLS {
+					http2lnWrapper := &http2Listener{
+						Listener: ln,
+						server:   srv.server,
+						h2server: h2server,
+					}
+					srv.h2listeners = append(srv.h2listeners, http2lnWrapper)
+					ln = http2lnWrapper
 				}
 
 				// if binding to port 0, the OS chooses a port for us;
@@ -517,7 +549,7 @@ func (app *App) Stop() error {
 
 	// honor scheduled/delayed shutdown time
 	if delay {
-		app.logger.Debug("shutdown scheduled",
+		app.logger.Info("shutdown scheduled",
 			zap.Duration("delay_duration", time.Duration(app.ShutdownDelay)),
 			zap.Time("time", scheduledTime))
 		time.Sleep(time.Duration(app.ShutdownDelay))
@@ -528,9 +560,9 @@ func (app *App) Stop() error {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(app.GracePeriod))
 		defer cancel()
-		app.logger.Debug("servers shutting down; grace period initiated", zap.Duration("duration", time.Duration(app.GracePeriod)))
+		app.logger.Info("servers shutting down; grace period initiated", zap.Duration("duration", time.Duration(app.GracePeriod)))
 	} else {
-		app.logger.Debug("servers shutting down with eternal grace period")
+		app.logger.Info("servers shutting down with eternal grace period")
 	}
 
 	// goroutines aren't guaranteed to be scheduled right away,
@@ -562,6 +594,21 @@ func (app *App) Stop() error {
 			return
 		}
 
+		// First close h3server then close listeners unlike stdlib for several reasons:
+		// 1, udp has only a single socket, once closed, no more data can be read and
+		// written. In contrast, closing tcp listeners won't affect established connections.
+		// This have something to do with graceful shutdown when upstream implements it.
+		// 2, h3server will only close listeners it's registered (quic listeners). Closing
+		// listener first and these listeners maybe unregistered thus won't be closed. caddy
+		// distinguishes quic-listener and underlying datagram sockets.
+
+		// TODO: CloseGracefully, once implemented upstream (see https://github.com/quic-go/quic-go/issues/2103)
+		if err := server.h3server.Close(); err != nil {
+			app.logger.Error("HTTP/3 server shutdown",
+				zap.Error(err),
+				zap.Strings("addresses", server.Listen))
+		}
+
 		// TODO: we have to manually close our listeners because quic-go won't
 		// close listeners it didn't create along with the server itself...
 		// see https://github.com/quic-go/quic-go/issues/3560
@@ -572,20 +619,26 @@ func (app *App) Stop() error {
 					zap.String("address", el.LocalAddr().String()))
 			}
 		}
+	}
+	stopH2Listener := func(server *Server) {
+		defer finishedShutdown.Done()
+		startedShutdown.Done()
 
-		// TODO: CloseGracefully, once implemented upstream (see https://github.com/quic-go/quic-go/issues/2103)
-		if err := server.h3server.Close(); err != nil {
-			app.logger.Error("HTTP/3 server shutdown",
-				zap.Error(err),
-				zap.Strings("addresses", server.Listen))
+		for i, s := range server.h2listeners {
+			if err := s.Shutdown(ctx); err != nil {
+				app.logger.Error("http2 listener shutdown",
+					zap.Error(err),
+					zap.Int("index", i))
+			}
 		}
 	}
 
 	for _, server := range app.Servers {
-		startedShutdown.Add(2)
-		finishedShutdown.Add(2)
+		startedShutdown.Add(3)
+		finishedShutdown.Add(3)
 		go stopServer(server)
 		go stopH3Server(server)
+		go stopH2Listener(server)
 	}
 
 	// block until all the goroutines have been run by the scheduler;

@@ -22,80 +22,38 @@ func TestSRVReverseProxy(t *testing.T) {
 		},
 		"apps": {
 			"pki": {
-				"certificate_authorities" : {
-					"local" : {
-					"install_trust": false
+				"certificate_authorities": {
+					"local": {
+						"install_trust": false
 					}
 				}
 			},
-		  "http": {
-			"grace_period": 1,
-			"servers": {
-			  "srv0": {
-				"listen": [
-				  ":8080"
-				],
-				"routes": [
-				  {
-					"handle": [
-					  {
-						"handler": "reverse_proxy",
-						"upstreams": [
-						  {
-							"lookup_srv": "srv.host.service.consul"
-						  }
+			"http": {
+				"grace_period": 1,
+				"servers": {
+					"srv0": {
+						"listen": [
+							":18080"
+						],
+						"routes": [
+							{
+								"handle": [
+									{
+										"handler": "reverse_proxy",
+										"dynamic_upstreams": {
+											"source": "srv",
+											"name": "srv.host.service.consul"
+										}
+									}
+								]
+							}
 						]
-					  }
-					]
-				  }
-				]
-			  }
-			}
-		  }
-		}
-	  }
-  `, "json")
-}
-
-func TestSRVWithDial(t *testing.T) {
-	caddytest.AssertLoadError(t, `
-	{
-		"apps": {
-			"pki": {
-				"certificate_authorities" : {
-				  "local" : {
-					"install_trust": false
-				  }
+					}
 				}
-			  },
-		  "http": {
-			"grace_period": 1,
-			"servers": {
-			  "srv0": {
-				"listen": [
-				  ":8080"
-				],
-				"routes": [
-				  {
-					"handle": [
-					  {
-						"handler": "reverse_proxy",
-						"upstreams": [
-						  {
-							"dial": "tcp/address.to.upstream:80",
-							"lookup_srv": "srv.host.service.consul"
-						  }
-						]
-					  }
-					]
-				  }
-				]
-			  }
 			}
-		  }
 		}
-	  }
-	`, "json", `upstream: specifying dial address is incompatible with lookup_srv: 0: {\"dial\": \"tcp/address.to.upstream:80\", \"lookup_srv\": \"srv.host.service.consul\"}`)
+	}
+	`, "json")
 }
 
 func TestDialWithPlaceholderUnix(t *testing.T) {
@@ -138,41 +96,41 @@ func TestDialWithPlaceholderUnix(t *testing.T) {
 		},
 		"apps": {
 			"pki": {
-				"certificate_authorities" : {
-				  "local" : {
-					"install_trust": false
-				  }
+				"certificate_authorities": {
+					"local": {
+						"install_trust": false
+					}
 				}
-			  },
-		  "http": {
-			"grace_period": 1,
-			"servers": {
-			  "srv0": {
-				"listen": [
-				  ":8080"
-				],
-				"routes": [
-				  {
-					"handle": [
-					  {
-						"handler": "reverse_proxy",
-						"upstreams": [
-						  {
-							"dial": "unix/{http.request.header.X-Caddy-Upstream-Dial}"
-						  }
+			},
+			"http": {
+				"grace_period": 1,
+				"servers": {
+					"srv0": {
+						"listen": [
+							":18080"
+						],
+						"routes": [
+							{
+								"handle": [
+									{
+										"handler": "reverse_proxy",
+										"upstreams": [
+											{
+												"dial": "unix/{http.request.header.X-Caddy-Upstream-Dial}"
+											}
+										]
+									}
+								]
+							}
 						]
-					  }
-					]
-				  }
-				]
-			  }
-			}
-		  }
+					}
+				}
+		  	}
 		}
-	  }
+	}
 	`, "json")
 
-	req, err := http.NewRequest(http.MethodGet, "http://localhost:8080", nil)
+	req, err := http.NewRequest(http.MethodGet, "http://localhost:18080", nil)
 	if err != nil {
 		t.Fail()
 		return
@@ -190,18 +148,18 @@ func TestReverseProxyWithPlaceholderDialAddress(t *testing.T) {
 		},
 		"apps": {
 			"pki": {
-				"certificate_authorities" : {
-				  "local" : {
-					"install_trust": false
-				  }
+				"certificate_authorities": {
+					"local": {
+						"install_trust": false
+					}
 				}
-			  },
+			},
 			"http": {
 				"grace_period": 1,
 				"servers": {
 					"srv0": {
 						"listen": [
-							":8080"
+							":18080"
 						],
 						"routes": [
 							{
@@ -264,14 +222,14 @@ func TestReverseProxyWithPlaceholderDialAddress(t *testing.T) {
 			}
 		}
 	}
-  	`, "json")
+	`, "json")
 
 	req, err := http.NewRequest(http.MethodGet, "http://localhost:9080", nil)
 	if err != nil {
 		t.Fail()
 		return
 	}
-	req.Header.Set("X-Caddy-Upstream-Dial", "localhost:8080")
+	req.Header.Set("X-Caddy-Upstream-Dial", "localhost:18080")
 	tester.AssertResponse(req, 200, "Hello, World!")
 }
 
@@ -284,18 +242,18 @@ func TestReverseProxyWithPlaceholderTCPDialAddress(t *testing.T) {
 		},
 		"apps": {
 			"pki": {
-				"certificate_authorities" : {
-				  "local" : {
-					"install_trust": false
-				  }
+				"certificate_authorities": {
+					"local": {
+						"install_trust": false
+					}
 				}
-			  },
+			},
 			"http": {
 				"grace_period": 1,
 				"servers": {
 					"srv0": {
 						"listen": [
-							":8080"
+							":18080"
 						],
 						"routes": [
 							{
@@ -340,7 +298,7 @@ func TestReverseProxyWithPlaceholderTCPDialAddress(t *testing.T) {
 										"handler": "reverse_proxy",
 										"upstreams": [
 											{
-												"dial": "tcp/{http.request.header.X-Caddy-Upstream-Dial}:8080"
+												"dial": "tcp/{http.request.header.X-Caddy-Upstream-Dial}:18080"
 											}
 										]
 									}
@@ -358,7 +316,7 @@ func TestReverseProxyWithPlaceholderTCPDialAddress(t *testing.T) {
 			}
 		}
 	}
-  	`, "json")
+	`, "json")
 
 	req, err := http.NewRequest(http.MethodGet, "http://localhost:9080", nil)
 	if err != nil {
@@ -367,51 +325,6 @@ func TestReverseProxyWithPlaceholderTCPDialAddress(t *testing.T) {
 	}
 	req.Header.Set("X-Caddy-Upstream-Dial", "localhost")
 	tester.AssertResponse(req, 200, "Hello, World!")
-}
-
-func TestSRVWithActiveHealthcheck(t *testing.T) {
-	caddytest.AssertLoadError(t, `
-	{
-		"apps": {
-			"pki": {
-				"certificate_authorities" : {
-				  "local" : {
-					"install_trust": false
-				  }
-				}
-			  },
-		  "http": {
-			"grace_period": 1,
-			"servers": {
-			  "srv0": {
-				"listen": [
-				  ":8080"
-				],
-				"routes": [
-				  {
-					"handle": [
-					  {
-						"handler": "reverse_proxy",
-						"health_checks": {
-							"active": {
-								"path": "/ok"
-							}
-						},
-						"upstreams": [
-						  {
-							"lookup_srv": "srv.host.service.consul"
-						  }
-						]
-					  }
-					]
-				  }
-				]
-			  }
-			}
-		  }
-		}
-	  }
-	`, "json", `upstream: lookup_srv is incompatible with active health checks: 0: {\"dial\": \"\", \"lookup_srv\": \"srv.host.service.consul\"}`)
 }
 
 func TestReverseProxyHealthCheck(t *testing.T) {
@@ -440,7 +353,7 @@ func TestReverseProxyHealthCheck(t *testing.T) {
 			health_timeout 100ms
 		}
 	}
-  `, "caddyfile")
+	`, "caddyfile")
 
 	time.Sleep(100 * time.Millisecond) // TODO: for some reason this test seems particularly flaky, getting 503 when it should be 200, unless we wait
 	tester.AssertGetResponse("http://localhost:9080/", 200, "Hello, World!")

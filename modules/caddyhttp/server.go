@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -101,6 +102,16 @@ type Server struct {
 	// The error routes work exactly like the normal routes.
 	Errors *HTTPErrorConfig `json:"errors,omitempty"`
 
+	// NamedRoutes describes a mapping of reusable routes that can be
+	// invoked by their name. This can be used to optimize memory usage
+	// when the same route is needed for many subroutes, by having
+	// the handlers and matchers be only provisioned once, but used from
+	// many places. These routes are not executed unless they are invoked
+	// from another route.
+	//
+	// EXPERIMENTAL: Subject to change or removal.
+	NamedRoutes map[string]*Route `json:"named_routes,omitempty"`
+
 	// How to handle TLS connections. At least one policy is
 	// required to enable HTTPS on this server if automatic
 	// HTTPS is disabled or does not apply.
@@ -129,6 +140,17 @@ type Server struct {
 	// `reverse_proxy` handler for example, which uses this
 	// to trust sensitive incoming `X-Forwarded-*` headers.
 	TrustedProxiesRaw json.RawMessage `json:"trusted_proxies,omitempty" caddy:"namespace=http.ip_sources inline_key=source"`
+
+	// The headers from which the client IP address could be
+	// read from. These will be considered in order, with the
+	// first good value being used as the client IP.
+	// By default, only `X-Forwarded-For` is considered.
+	//
+	// This depends on `trusted_proxies` being configured and
+	// the request being validated as coming from a trusted
+	// proxy, otherwise the client IP will be set to the direct
+	// remote IP address.
+	ClientIPHeaders []string `json:"client_ip_headers,omitempty"`
 
 	// Enables access logging and configures how access logs are handled
 	// in this server. To minimally enable access logs, simply set this
@@ -186,6 +208,7 @@ type Server struct {
 	server      *http.Server
 	h3server    *http3.Server
 	h3listeners []net.PacketConn // TODO: we have to hold these because quic-go won't close listeners it didn't create
+	h2listeners []*http2Listener
 	addresses   []caddy.NetworkAddress
 
 	trustedProxies IPRangeSource
@@ -201,6 +224,16 @@ type Server struct {
 
 // ServeHTTP is the entry point for all HTTP requests.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// If there are listener wrappers that process tls connections but don't return a *tls.Conn, this field will be nil.
+	// Can be removed if https://github.com/golang/go/pull/56110 is ever merged.
+	if r.TLS == nil {
+		conn := r.Context().Value(ConnCtxKey).(net.Conn)
+		if csc, ok := conn.(connectionStateConn); ok {
+			r.TLS = new(tls.ConnectionState)
+			*r.TLS = csc.ConnectionState()
+		}
+	}
+
 	w.Header().Set("Server", "Shield")
 
 	// advertise HTTP/3, if enabled
@@ -248,43 +281,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		wrec := NewResponseRecorder(w, nil, nil)
 		w = wrec
 
+		// wrap the request body in a LengthReader
+		// so we can track the number of bytes read from it
+		var bodyReader *lengthReader
+		if r.Body != nil {
+			bodyReader = &lengthReader{Source: r.Body}
+			r.Body = bodyReader
+		}
+
 		// capture the original version of the request
 		accLog := s.accessLogger.With(loggableReq)
 
-		defer func() {
-			// this request may be flagged as omitted from the logs
-			if skipLog, ok := GetVar(r.Context(), SkipLogVar).(bool); ok && skipLog {
-				return
-			}
-
-			repl.Set("http.response.status", wrec.Status()) // will be 0 if no response is written by us (Go will write 200 to client)
-			repl.Set("http.response.size", wrec.Size())
-			repl.Set("http.response.duration", duration)
-			repl.Set("http.response.duration_ms", duration.Seconds()*1e3) // multiply seconds to preserve decimal (see #4666)
-
-			logger := accLog
-			if s.Logs != nil {
-				logger = s.Logs.wrapLogger(logger, r.Host)
-			}
-
-			log := logger.Info
-			if wrec.Status() >= 400 {
-				log = logger.Error
-			}
-
-			userID, _ := repl.GetString("http.auth.user.id")
-
-			log("handled request",
-				zap.String("user_id", userID),
-				zap.Duration("duration", duration),
-				zap.Int("size", wrec.Size()),
-				zap.Int("status", wrec.Status()),
-				zap.Object("resp_headers", LoggableHTTPHeader{
-					Header:               wrec.Header(),
-					ShouldLogCredentials: shouldLogCredentials,
-				}),
-			)
-		}()
+		defer s.logRequest(accLog, r, wrec, &duration, repl, bodyReader, shouldLogCredentials)
 	}
 
 	start := time.Now()
@@ -512,17 +520,7 @@ func (s *Server) findLastRouteWithHostMatcher() int {
 // not already done, and then uses that server to serve HTTP/3 over
 // the listener, with Server s as the handler.
 func (s *Server) serveHTTP3(addr caddy.NetworkAddress, tlsCfg *tls.Config) error {
-	switch addr.Network {
-	case "unix":
-		addr.Network = "unixgram"
-	case "tcp4":
-		addr.Network = "udp4"
-	case "tcp6":
-		addr.Network = "udp6"
-	default:
-		addr.Network = "udp" // TODO: Maybe a better default is to not enable HTTP/3 if we do not know the network?
-	}
-
+	addr.Network = getHTTP3Network(addr.Network)
 	lnAny, err := addr.Listen(s.ctx, 0, net.ListenConfig{})
 	if err != nil {
 		return err
@@ -547,7 +545,7 @@ func (s *Server) serveHTTP3(addr caddy.NetworkAddress, tlsCfg *tls.Config) error
 		}
 	}
 
-	s.h3listeners = append(s.h3listeners, lnAny.(net.PacketConn))
+	s.h3listeners = append(s.h3listeners, ln)
 
 	//nolint:errcheck
 	go s.h3server.ServeListener(h3ln)
@@ -666,6 +664,57 @@ func (s *Server) shouldLogRequest(r *http.Request) bool {
 	return !s.Logs.SkipUnmappedHosts
 }
 
+// logRequest logs the request to access logs, unless skipped.
+func (s *Server) logRequest(
+	accLog *zap.Logger, r *http.Request, wrec ResponseRecorder, duration *time.Duration,
+	repl *caddy.Replacer, bodyReader *lengthReader, shouldLogCredentials bool,
+) {
+	// this request may be flagged as omitted from the logs
+	if skipLog, ok := GetVar(r.Context(), SkipLogVar).(bool); ok && skipLog {
+		return
+	}
+
+	repl.Set("http.response.status", wrec.Status()) // will be 0 if no response is written by us (Go will write 200 to client)
+	repl.Set("http.response.size", wrec.Size())
+	repl.Set("http.response.duration", duration)
+	repl.Set("http.response.duration_ms", duration.Seconds()*1e3) // multiply seconds to preserve decimal (see #4666)
+
+	logger := accLog
+	if s.Logs != nil {
+		logger = s.Logs.wrapLogger(logger, r.Host)
+	}
+
+	log := logger.Info
+	if wrec.Status() >= 400 {
+		log = logger.Error
+	}
+
+	userID, _ := repl.GetString("http.auth.user.id")
+
+	reqBodyLength := 0
+	if bodyReader != nil {
+		reqBodyLength = bodyReader.Length
+	}
+
+	extra := r.Context().Value(ExtraLogFieldsCtxKey).(*ExtraLogFields)
+
+	fieldCount := 6
+	fields := make([]zapcore.Field, 0, fieldCount+len(extra.fields))
+	fields = append(fields,
+		zap.Int("bytes_read", reqBodyLength),
+		zap.String("user_id", userID),
+		zap.Duration("duration", *duration),
+		zap.Int("size", wrec.Size()),
+		zap.Int("status", wrec.Status()),
+		zap.Object("resp_headers", LoggableHTTPHeader{
+			Header:               wrec.Header(),
+			ShouldLogCredentials: shouldLogCredentials,
+		}))
+	fields = append(fields, extra.fields...)
+
+	log("handled request", fields...)
+}
+
 // protocol returns true if the protocol proto is configured/enabled.
 func (s *Server) protocol(proto string) bool {
 	for _, p := range s.Protocols {
@@ -684,18 +733,29 @@ func (s *Server) protocol(proto string) bool {
 // EXPERIMENTAL: Subject to change or removal.
 func (s *Server) Listeners() []net.Listener { return s.listeners }
 
+// Name returns the server's name.
+func (s *Server) Name() string { return s.name }
+
 // PrepareRequest fills the request r for use in a Caddy HTTP handler chain. w and s can
 // be nil, but the handlers will lose response placeholders and access to the server.
 func PrepareRequest(r *http.Request, repl *caddy.Replacer, w http.ResponseWriter, s *Server) *http.Request {
 	// set up the context for the request
 	ctx := context.WithValue(r.Context(), caddy.ReplacerCtxKey, repl)
 	ctx = context.WithValue(ctx, ServerCtxKey, s)
+
+	trusted, clientIP := determineTrustedProxy(r, s)
 	ctx = context.WithValue(ctx, VarsCtxKey, map[string]any{
-		TrustedProxyVarKey: determineTrustedProxy(r, s),
+		TrustedProxyVarKey: trusted,
+		ClientIPVarKey:     clientIP,
 	})
+
 	ctx = context.WithValue(ctx, routeGroupCtxKey, make(map[string]struct{}))
+
 	var url2 url.URL // avoid letting this escape to the heap
 	ctx = context.WithValue(ctx, OriginalRequestCtxKey, originalRequest(r, &url2))
+
+	ctx = context.WithValue(ctx, ExtraLogFieldsCtxKey, new(ExtraLogFields))
+
 	r = r.WithContext(ctx)
 
 	// once the pointer to the request won't change
@@ -724,11 +784,12 @@ func originalRequest(req *http.Request, urlCopy *url.URL) http.Request {
 
 // determineTrustedProxy parses the remote IP address of
 // the request, and determines (if the server configured it)
-// if the client is a trusted proxy.
-func determineTrustedProxy(r *http.Request, s *Server) bool {
+// if the client is a trusted proxy. If trusted, also returns
+// the real client IP if possible.
+func determineTrustedProxy(r *http.Request, s *Server) (bool, string) {
 	// If there's no server, then we can't check anything
 	if s == nil {
-		return false
+		return false, ""
 	}
 
 	// Parse the remote IP, ignore the error as non-fatal,
@@ -738,7 +799,7 @@ func determineTrustedProxy(r *http.Request, s *Server) bool {
 	// remote address and used an invalid value.
 	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
 	// Client IP may contain a zone if IPv6, so we need
@@ -746,20 +807,56 @@ func determineTrustedProxy(r *http.Request, s *Server) bool {
 	clientIP, _, _ = strings.Cut(clientIP, "%")
 	ipAddr, err := netip.ParseAddr(clientIP)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
 	// Check if the client is a trusted proxy
 	if s.trustedProxies == nil {
-		return false
+		return false, ipAddr.String()
 	}
 	for _, ipRange := range s.trustedProxies.GetIPRanges(r) {
 		if ipRange.Contains(ipAddr) {
-			return true
+			// We trust the proxy, so let's try to
+			// determine the real client IP
+			return true, trustedRealClientIP(r, s.ClientIPHeaders, ipAddr.String())
 		}
 	}
 
-	return false
+	return false, ipAddr.String()
+}
+
+// trustedRealClientIP finds the client IP from the request assuming it is
+// from a trusted client. If there is no client IP headers, then the
+// direct remote address is returned. If there are client IP headers,
+// then the first value from those headers is used.
+func trustedRealClientIP(r *http.Request, headers []string, clientIP string) string {
+	// Read all the values of the configured client IP headers, in order
+	var values []string
+	for _, field := range headers {
+		values = append(values, r.Header.Values(field)...)
+	}
+
+	// If we don't have any values, then give up
+	if len(values) == 0 {
+		return clientIP
+	}
+
+	// Since there can be many header values, we need to
+	// join them together before splitting to get the full list
+	allValues := strings.Split(strings.Join(values, ","), ",")
+
+	// Get first valid left-most IP address
+	for _, ip := range allValues {
+		ip, _, _ = strings.Cut(strings.TrimSpace(ip), "%")
+		ipAddr, err := netip.ParseAddr(ip)
+		if err != nil {
+			continue
+		}
+		return ipAddr.String()
+	}
+
+	// We didn't find a valid IP
+	return clientIP
 }
 
 // cloneURL makes a copy of r.URL and returns a
@@ -771,6 +868,23 @@ func cloneURL(from, to *url.URL) {
 		*userInfo = *from.User
 		to.User = userInfo
 	}
+}
+
+// lengthReader is an io.ReadCloser that keeps track of the
+// number of bytes read from the request body.
+type lengthReader struct {
+	Source io.ReadCloser
+	Length int
+}
+
+func (r *lengthReader) Read(b []byte) (int, error) {
+	n, err := r.Source.Read(b)
+	r.Length += n
+	return n, err
+}
+
+func (r *lengthReader) Close() error {
+	return r.Source.Close()
 }
 
 // Context keys for HTTP request context values.
@@ -785,6 +899,39 @@ const (
 	// originally came into the server's entry handler
 	OriginalRequestCtxKey caddy.CtxKey = "original_request"
 
+	// For referencing underlying net.Conn
+	ConnCtxKey caddy.CtxKey = "conn"
+
 	// For tracking whether the client is a trusted proxy
 	TrustedProxyVarKey string = "trusted_proxy"
+
+	// For tracking the real client IP (affected by trusted_proxy)
+	ClientIPVarKey string = "client_ip"
 )
+
+var networkTypesHTTP3 = map[string]string{
+	"unix": "unixgram",
+	"tcp4": "udp4",
+	"tcp6": "udp6",
+}
+
+// RegisterNetworkHTTP3 registers a mapping from non-HTTP/3 network to HTTP/3
+// network. This should be called during init() and will panic if the network
+// type is standard, reserved, or already registered.
+//
+// EXPERIMENTAL: Subject to change.
+func RegisterNetworkHTTP3(originalNetwork, h3Network string) {
+	if _, ok := networkTypesHTTP3[strings.ToLower(originalNetwork)]; ok {
+		panic("network type " + originalNetwork + " is already registered")
+	}
+	networkTypesHTTP3[originalNetwork] = h3Network
+}
+
+func getHTTP3Network(originalNetwork string) string {
+	h3Network, ok := networkTypesHTTP3[strings.ToLower(originalNetwork)]
+	if !ok {
+		// TODO: Maybe a better default is to not enable HTTP/3 if we do not know the network?
+		return "udp"
+	}
+	return h3Network
+}

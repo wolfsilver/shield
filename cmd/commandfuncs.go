@@ -208,6 +208,16 @@ func cmdRun(fl Flags) (int, error) {
 		}
 	}
 
+	// create pidfile now, in case loading config takes a while (issue #5477)
+	if runCmdPidfileFlag != "" {
+		err := caddy.PIDFile(runCmdPidfileFlag)
+		if err != nil {
+			caddy.Log().Error("unable to write PID file",
+				zap.String("pidfile", runCmdPidfileFlag),
+				zap.Error(err))
+		}
+	}
+
 	// run the initial config
 	err = caddy.Load(config, true)
 	if err != nil {
@@ -240,16 +250,6 @@ func cmdRun(fl Flags) (int, error) {
 	// (this better only be used in dev!)
 	if runCmdWatchFlag {
 		go watchConfigFile(configFile, runCmdConfigAdapterFlag)
-	}
-
-	// create pidfile
-	if runCmdPidfileFlag != "" {
-		err := caddy.PIDFile(runCmdPidfileFlag)
-		if err != nil {
-			caddy.Log().Error("unable to write PID file",
-				zap.String("pidfile", runCmdPidfileFlag),
-				zap.Error(err))
-		}
 	}
 
 	// warn if the environment does not provide enough information about the disk
@@ -490,7 +490,7 @@ func cmdAdaptConfig(fl Flags) (int, error) {
 	// validate output if requested
 	if adaptCmdValidateFlag {
 		var cfg *caddy.Config
-		err = json.Unmarshal(adaptedConfig, &cfg)
+		err = caddy.StrictUnmarshalJSON(adaptedConfig, &cfg)
 		if err != nil {
 			return caddy.ExitCodeFailedStartup, fmt.Errorf("decoding config: %v", err)
 		}
@@ -523,7 +523,7 @@ func cmdValidateConfig(fl Flags) (int, error) {
 	input = caddy.RemoveMetaFields(input)
 
 	var cfg *caddy.Config
-	err = json.Unmarshal(input, &cfg)
+	err = caddy.StrictUnmarshalJSON(input, &cfg)
 	if err != nil {
 		return caddy.ExitCodeFailedStartup, fmt.Errorf("decoding config: %v", err)
 	}
@@ -589,7 +589,10 @@ func cmdFmt(fl Flags) (int, error) {
 	}
 
 	if warning, diff := caddyfile.FormattingDifference(formatCmdConfigFile, input); diff {
-		return caddy.ExitCodeFailedStartup, fmt.Errorf("%s:%d: Caddyfile input is not formatted", warning.File, warning.Line)
+		return caddy.ExitCodeFailedStartup, fmt.Errorf(`%s:%d: Caddyfile input is not formatted; Tip: use '--overwrite' to update your Caddyfile in-place instead of previewing it. Consult '--help' for more options`,
+			warning.File,
+			warning.Line,
+		)
 	}
 
 	return caddy.ExitCodeSuccess, nil
