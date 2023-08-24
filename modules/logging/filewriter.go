@@ -22,10 +22,11 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/dustin/go-humanize"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 )
 
 func init() {
@@ -126,7 +127,7 @@ func (fw FileWriter) OpenWriter() (io.WriteCloser, error) {
 	}
 
 	// otherwise just open a regular file
-	return os.OpenFile(fw.Filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0666)
+	return os.OpenFile(fw.Filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 }
 
 // UnmarshalCaddyfile sets up the module from Caddyfile tokens. Syntax:

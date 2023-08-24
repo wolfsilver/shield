@@ -23,12 +23,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/caddyserver/certmagic"
+	"github.com/mholt/acmez/acme"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
-	"github.com/caddyserver/certmagic"
-	"github.com/mholt/acmez/acme"
 )
 
 func (st ServerType) buildTLSApp(
@@ -36,7 +37,6 @@ func (st ServerType) buildTLSApp(
 	options map[string]any,
 	warnings []caddyconfig.Warning,
 ) (*caddytls.TLS, []caddyconfig.Warning, error) {
-
 	tlsApp := &caddytls.TLS{CertificatesRaw: make(caddy.ModuleMap)}
 	var certLoaders []caddytls.CertificateLoader
 

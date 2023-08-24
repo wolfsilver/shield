@@ -25,8 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common"
 	"github.com/google/cel-go/common/operators"
@@ -39,6 +37,9 @@ import (
 	"github.com/google/cel-go/parser"
 	"go.uber.org/zap"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 )
 
 func init() {
@@ -234,9 +235,11 @@ func (cr celHTTPRequest) Parent() interpreter.Activation {
 func (cr celHTTPRequest) ConvertToNative(typeDesc reflect.Type) (any, error) {
 	return cr.Request, nil
 }
+
 func (celHTTPRequest) ConvertToType(typeVal ref.Type) ref.Val {
 	panic("not implemented")
 }
+
 func (cr celHTTPRequest) Equal(other ref.Val) ref.Val {
 	if o, ok := other.Value().(celHTTPRequest); ok {
 		return types.Bool(o.Request == cr.Request)
@@ -255,12 +258,14 @@ type celPkixName struct{ *pkix.Name }
 func (pn celPkixName) ConvertToNative(typeDesc reflect.Type) (any, error) {
 	return pn.Name, nil
 }
+
 func (pn celPkixName) ConvertToType(typeVal ref.Type) ref.Val {
 	if typeVal.TypeName() == "string" {
 		return types.String(pn.Name.String())
 	}
 	panic("not implemented")
 }
+
 func (pn celPkixName) Equal(other ref.Val) ref.Val {
 	if o, ok := other.Value().(string); ok {
 		return types.Bool(pn.Name.String() == o)

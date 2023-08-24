@@ -31,14 +31,15 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
-	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/dustin/go-humanize"
 	"github.com/yuin/goldmark"
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	gmhtml "github.com/yuin/goldmark/renderer/html"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 // TemplateContext is the TemplateContext with which HTTP templates are executed.
@@ -103,13 +104,11 @@ func (c TemplateContext) OriginalReq() http.Request {
 // trusted files. If it is not trusted, be sure to use escaping functions
 // in your template.
 func (c TemplateContext) funcInclude(filename string, args ...any) (string, error) {
-
 	bodyBuf := bufPool.Get().(*bytes.Buffer)
 	bodyBuf.Reset()
 	defer bufPool.Put(bodyBuf)
 
 	err := c.readFileToBuffer(filename, bodyBuf)
-
 	if err != nil {
 		return "", err
 	}
@@ -215,7 +214,6 @@ func (c TemplateContext) funcHTTPInclude(uri string) (string, error) {
 // {{ template }} from the standard template library. If the imported file has
 // no {{ define }} blocks, the name of the import will be the path
 func (c *TemplateContext) funcImport(filename string) (string, error) {
-
 	bodyBuf := bufPool.Get().(*bytes.Buffer)
 	bodyBuf.Reset()
 	defer bufPool.Put(bodyBuf)

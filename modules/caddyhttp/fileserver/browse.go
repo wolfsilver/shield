@@ -29,10 +29,11 @@ import (
 	"sync"
 	"text/template"
 
+	"go.uber.org/zap"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/templates"
-	"go.uber.org/zap"
 )
 
 //go:embed browse.html
@@ -113,7 +114,7 @@ func (fsrv *FileServer) serveBrowse(root, dirPath string, w http.ResponseWriter,
 			fs = http.Dir(repl.ReplaceAll(fsrv.Root, "."))
 		}
 
-		var tplCtx = &templateContext{
+		tplCtx := &templateContext{
 			TemplateContext: templates.TemplateContext{
 				Root:       fs,
 				Req:        r,

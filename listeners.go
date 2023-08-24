@@ -31,10 +31,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/caddyserver/caddy/v2/internal"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"go.uber.org/zap"
+
+	"github.com/caddyserver/caddy/v2/internal"
 )
 
 // NetworkAddress represents one or more network addresses.
@@ -174,7 +175,6 @@ func (na NetworkAddress) listen(ctx context.Context, portOffset uint, config net
 			if err := os.Chmod(address, unixFileMode); err != nil {
 				return nil, fmt.Errorf("unable to set permissions (%s) on %s: %v", unixFileMode, address, err)
 			}
-
 		}
 		return socket, err
 	}

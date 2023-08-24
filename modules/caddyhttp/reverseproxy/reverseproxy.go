@@ -32,14 +32,15 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+	"golang.org/x/net/http/httpguts"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyevents"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/headers"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite"
-	"go.uber.org/zap"
-	"golang.org/x/net/http/httpguts"
 )
 
 func init() {
@@ -355,6 +356,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	if h.HealthChecks != nil {
 		// set defaults on passive health checks, if necessary
 		if h.HealthChecks.Passive != nil {
+			h.HealthChecks.Passive.logger = h.logger.Named("health_checker.passive")
 			if h.HealthChecks.Passive.FailDuration > 0 && h.HealthChecks.Passive.MaxFails == 0 {
 				h.HealthChecks.Passive.MaxFails = 1
 			}
@@ -450,7 +452,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 // It returns true when the loop is done and should break; false otherwise. The error value returned should
 // be assigned to the proxyErr value for the next iteration of the loop (or the error handled after break).
 func (h *Handler) proxyLoopIteration(r *http.Request, origReq *http.Request, w http.ResponseWriter, proxyErr error, start time.Time, retries int,
-	repl *caddy.Replacer, reqHeader http.Header, reqHost string, next caddyhttp.Handler) (bool, error) {
+	repl *caddy.Replacer, reqHeader http.Header, reqHost string, next caddyhttp.Handler,
+) (bool, error) {
 	// get the updated list of upstreams
 	upstreams := h.Upstreams
 	if h.DynamicUpstreams != nil {
@@ -1075,12 +1078,11 @@ func (h Handler) provisionUpstream(upstream *Upstream) {
 	// without MaxRequests), copy the value into this upstream, since the
 	// value in the upstream (MaxRequests) is what is used during
 	// availability checks
-	if h.HealthChecks != nil && h.HealthChecks.Passive != nil {
-		h.HealthChecks.Passive.logger = h.logger.Named("health_checker.passive")
-		if h.HealthChecks.Passive.UnhealthyRequestCount > 0 &&
-			upstream.MaxRequests == 0 {
-			upstream.MaxRequests = h.HealthChecks.Passive.UnhealthyRequestCount
-		}
+	if h.HealthChecks != nil &&
+		h.HealthChecks.Passive != nil &&
+		h.HealthChecks.Passive.UnhealthyRequestCount > 0 &&
+		upstream.MaxRequests == 0 {
+		upstream.MaxRequests = h.HealthChecks.Passive.UnhealthyRequestCount
 	}
 
 	// upstreams need independent access to the passive

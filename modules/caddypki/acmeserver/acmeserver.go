@@ -26,9 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/caddyserver/caddy/v2/modules/caddypki"
 	"github.com/go-chi/chi"
 	"github.com/smallstep/certificates/acme"
 	"github.com/smallstep/certificates/acme/api"
@@ -38,6 +35,10 @@ import (
 	"github.com/smallstep/certificates/db"
 	"github.com/smallstep/nosql"
 	"go.uber.org/zap"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/caddyserver/caddy/v2/modules/caddypki"
 )
 
 func init() {
@@ -239,7 +240,7 @@ func (ash Handler) openDatabase() (*db.AuthDB, error) {
 		dbFolder := filepath.Join(caddy.AppDataDir(), "acme_server", key)
 		dbPath := filepath.Join(dbFolder, "db")
 
-		err := os.MkdirAll(dbFolder, 0755)
+		err := os.MkdirAll(dbFolder, 0o755)
 		if err != nil {
 			return nil, fmt.Errorf("making folder for CA database: %v", err)
 		}
@@ -310,8 +311,10 @@ func (c resolverClient) LookupTxt(name string) ([]string, error) {
 
 const defaultPathPrefix = "/acme/"
 
-var keyCleaner = regexp.MustCompile(`[^\w.-_]`)
-var databasePool = caddy.NewUsagePool()
+var (
+	keyCleaner   = regexp.MustCompile(`[^\w.-_]`)
+	databasePool = caddy.NewUsagePool()
+)
 
 type databaseCloser struct {
 	DB *db.AuthDB

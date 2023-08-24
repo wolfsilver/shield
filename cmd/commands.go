@@ -21,9 +21,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
+
+	"github.com/caddyserver/caddy/v2"
 )
 
 // Command represents a subcommand. Name, Func,
@@ -444,7 +445,7 @@ argument of --directory. If the directory does not exist, it will be created.
 				if dir == "" {
 					return caddy.ExitCodeFailedQuit, fmt.Errorf("designated output directory and specified section are required")
 				}
-				if err := os.MkdirAll(dir, 0755); err != nil {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return caddy.ExitCodeFailedQuit, err
 				}
 				if err := doc.GenManTree(rootCmd, &doc.GenManHeader{

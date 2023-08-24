@@ -25,10 +25,11 @@ import (
 	"strconv"
 	"strings"
 
+	"go.uber.org/zap/zapcore"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"go.uber.org/zap/zapcore"
 )
 
 func init() {
@@ -81,8 +82,7 @@ func hash(s string) string {
 // of the SHA-256 hash of the content. Operates
 // on string fields, or on arrays of strings
 // where each string is hashed.
-type HashFilter struct {
-}
+type HashFilter struct{}
 
 // CaddyModule returns the Caddy module information.
 func (HashFilter) CaddyModule() caddy.ModuleInfo {

@@ -131,7 +131,8 @@ func (r *Replacer) ReplaceFunc(input string, f ReplacementFunc) (string, error) 
 
 func (r *Replacer) replace(input, empty string,
 	treatUnknownAsEmpty, errOnEmpty, errOnUnknown bool,
-	f ReplacementFunc) (string, error) {
+	f ReplacementFunc,
+) (string, error) {
 	if !strings.Contains(input, string(phOpen)) {
 		return input, nil
 	}
@@ -318,7 +319,10 @@ func globalDefaultReplacements(key string) (any, bool) {
 	case "time.now":
 		return nowFunc(), true
 	case "time.now.http":
-		return nowFunc().Format(http.TimeFormat), true
+		// According to the comment for http.TimeFormat, the timezone must be in UTC
+		// to generate the correct format.
+		// https://github.com/caddyserver/caddy/issues/5773
+		return nowFunc().UTC().Format(http.TimeFormat), true
 	case "time.now.common_log":
 		return nowFunc().Format("02/Jan/2006:15:04:05 -0700"), true
 	case "time.now.year":

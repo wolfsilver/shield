@@ -21,15 +21,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
-	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/headers"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 func init() {
@@ -284,7 +286,8 @@ func cmdReverseProxy(fs caddycmd.Flags) (int, error) {
 
 	var false bool
 	cfg := &caddy.Config{
-		Admin: &caddy.AdminConfig{Disabled: true,
+		Admin: &caddy.AdminConfig{
+			Disabled: true,
 			Config: &caddy.ConfigSettings{
 				Persist: &false,
 			},

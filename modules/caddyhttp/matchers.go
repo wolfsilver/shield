@@ -30,11 +30,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 )
 
 type (
@@ -1392,9 +1393,7 @@ func ParseCaddyfileNestedMatcherSet(d *caddyfile.Dispenser) (caddy.ModuleMap, er
 	return matcherSet, nil
 }
 
-var (
-	wordRE = regexp.MustCompile(`\w+`)
-)
+var wordRE = regexp.MustCompile(`\w+`)
 
 const regexpPlaceholderPrefix = "http.regexp"
 
