@@ -197,7 +197,7 @@ func (app *App) automaticHTTPSPhase1(ctx caddy.Context, repl *caddy.Replacer) er
 					// if a certificate for this name is already loaded,
 					// don't obtain another one for it, unless we are
 					// supposed to ignore loaded certificates
-					if !srv.AutoHTTPS.IgnoreLoadedCerts && app.tlsApp.HasCertificateForSubject(d) {
+					if !strings.Contains(d, "*") && !srv.AutoHTTPS.IgnoreLoadedCerts && app.tlsApp.HasCertificateForSubject(d) {
 						logger.Info("skipping automatic certificate management because one or more matching certificates are already loaded",
 							zap.String("domain", d),
 							zap.String("server_name", srvName),
