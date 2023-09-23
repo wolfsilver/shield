@@ -6,6 +6,7 @@ RUN set -eux; xcaddy build \
 		--with github.com/caddyserver/caddy/v2=github.com/wolfsilver/shield/v2@v2.0.106	 \
 		--with github.com/caddyserver/forwardproxy@caddy2=github.com/wolfsilver/forwardproxy@3036edc \
 		--with github.com/caddyserver/transform-encoder \
+		--with github.com/mholt/caddy-events-exec \
 		--with github.com/caddy-dns/cloudflare \
 		--with github.com/ueffel/caddy-brotli \
 		--output /usr/bin/caddy
