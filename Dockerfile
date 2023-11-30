@@ -3,7 +3,7 @@ FROM caddy:builder-alpine as base
 # ENV CADDY_VERSION v2.7.4
 
 RUN set -eux; xcaddy build \
-		--with github.com/caddyserver/caddy/v2=github.com/wolfsilver/shield/v2@v2.0.106	 \
+		--with github.com/caddyserver/caddy/v2=github.com/wolfsilver/shield/v2@v2.0.109	 \
 		--with github.com/caddyserver/forwardproxy@caddy2=github.com/wolfsilver/forwardproxy@3036edc \
 		--with github.com/caddyserver/transform-encoder \
 		--with github.com/mholt/caddy-events-exec \
