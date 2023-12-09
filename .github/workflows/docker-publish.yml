@@ -34,6 +34,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: update Dockerfile with tag # update with current tag
+        run: |
+          tag=${GITHUB_REF#refs/tags/}
+          sed -i "s/SHIELD_TAG/${tag}/g" Dockerfile
+          cat Dockerfile
+        
+
       # Install the cosign tool except on PR
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
