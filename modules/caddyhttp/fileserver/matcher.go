@@ -15,7 +15,6 @@
 package fileserver
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -28,11 +27,12 @@ import (
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common"
+	"github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/common/operators"
+	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/parser"
 	"go.uber.org/zap"
-	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -64,8 +64,7 @@ func init() {
 type MatchFile struct {
 	// The file system implementation to use. By default, the
 	// local disk file system will be used.
-	FileSystemRaw json.RawMessage `json:"file_system,omitempty" caddy:"namespace=caddy.fs inline_key=backend"`
-	fileSystem    fs.FS
+	FileSystem string `json:"fs,omitempty"`
 
 	// The root directory, used for creating absolute
 	// file paths, and required when working with
@@ -108,6 +107,8 @@ type MatchFile struct {
 	// component in order to be used as a split delimiter.
 	SplitPath []string `json:"split_path,omitempty"`
 
+	fsmap caddy.FileSystems
+
 	logger *zap.Logger
 }
 
@@ -127,6 +128,7 @@ func (MatchFile) CaddyModule() caddy.ModuleInfo {
 //	    try_policy first_exist|smallest_size|largest_size|most_recently_modified
 //	}
 func (m *MatchFile) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	// iterate to merge multiple matchers into one
 	for d.Next() {
 		m.TryFiles = append(m.TryFiles, d.RemainingArgs()...)
 		for d.NextBlock(0) {
@@ -181,16 +183,22 @@ func (MatchFile) CELLibrary(ctx caddy.Context) (cel.Library, error) {
 			root = values["root"][0]
 		}
 
+		var fsName string
+		if len(values["fs"]) > 0 {
+			fsName = values["fs"][0]
+		}
+
 		var try_policy string
 		if len(values["try_policy"]) > 0 {
 			root = values["try_policy"][0]
 		}
 
 		m := MatchFile{
-			Root:      root,
-			TryFiles:  values["try_files"],
-			TryPolicy: try_policy,
-			SplitPath: values["split_path"],
+			Root:       root,
+			TryFiles:   values["try_files"],
+			TryPolicy:  try_policy,
+			SplitPath:  values["split_path"],
+			FileSystem: fsName,
 		}
 
 		err = m.Provision(ctx)
@@ -213,30 +221,30 @@ func (MatchFile) CELLibrary(ctx caddy.Context) (cel.Library, error) {
 }
 
 func celFileMatcherMacroExpander() parser.MacroExpander {
-	return func(eh parser.ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*exprpb.Expr, *common.Error) {
+	return func(eh parser.ExprHelper, target ast.Expr, args []ast.Expr) (ast.Expr, *common.Error) {
 		if len(args) == 0 {
-			return eh.GlobalCall("file",
-				eh.Ident("request"),
+			return eh.NewCall("file",
+				eh.NewIdent("request"),
 				eh.NewMap(),
 			), nil
 		}
 		if len(args) == 1 {
 			arg := args[0]
 			if isCELStringLiteral(arg) || isCELCaddyPlaceholderCall(arg) {
-				return eh.GlobalCall("file",
-					eh.Ident("request"),
+				return eh.NewCall("file",
+					eh.NewIdent("request"),
 					eh.NewMap(eh.NewMapEntry(
-						eh.LiteralString("try_files"),
+						eh.NewLiteral(types.String("try_files")),
 						eh.NewList(arg),
 						false,
 					)),
 				), nil
 			}
 			if isCELTryFilesLiteral(arg) {
-				return eh.GlobalCall("file", eh.Ident("request"), arg), nil
+				return eh.NewCall("file", eh.NewIdent("request"), arg), nil
 			}
 			return nil, &common.Error{
-				Location: eh.OffsetLocation(arg.GetId()),
+				Location: eh.OffsetLocation(arg.ID()),
 				Message:  "matcher requires either a map or string literal argument",
 			}
 		}
@@ -244,15 +252,15 @@ func celFileMatcherMacroExpander() parser.MacroExpander {
 		for _, arg := range args {
 			if !(isCELStringLiteral(arg) || isCELCaddyPlaceholderCall(arg)) {
 				return nil, &common.Error{
-					Location: eh.OffsetLocation(arg.GetId()),
+					Location: eh.OffsetLocation(arg.ID()),
 					Message:  "matcher only supports repeated string literal arguments",
 				}
 			}
 		}
-		return eh.GlobalCall("file",
-			eh.Ident("request"),
+		return eh.NewCall("file",
+			eh.NewIdent("request"),
 			eh.NewMap(eh.NewMapEntry(
-				eh.LiteralString("try_files"),
+				eh.NewLiteral(types.String("try_files")),
 				eh.NewList(args...),
 				false,
 			)),
@@ -264,20 +272,14 @@ func celFileMatcherMacroExpander() parser.MacroExpander {
 func (m *MatchFile) Provision(ctx caddy.Context) error {
 	m.logger = ctx.Logger()
 
-	// establish the file system to use
-	if len(m.FileSystemRaw) > 0 {
-		mod, err := ctx.LoadModule(m, "FileSystemRaw")
-		if err != nil {
-			return fmt.Errorf("loading file system module: %v", err)
-		}
-		m.fileSystem = mod.(fs.FS)
-	}
-	if m.fileSystem == nil {
-		m.fileSystem = osFS{}
-	}
+	m.fsmap = ctx.Filesystems()
 
 	if m.Root == "" {
 		m.Root = "{http.vars.root}"
+	}
+
+	if m.FileSystem == "" {
+		m.FileSystem = "{http.vars.fs}"
 	}
 
 	// if list of files to try was omitted entirely, assume URL path
@@ -320,6 +322,13 @@ func (m MatchFile) selectFile(r *http.Request) (matched bool) {
 
 	root := filepath.Clean(repl.ReplaceAll(m.Root, "."))
 
+	fsName := repl.ReplaceAll(m.FileSystem, "")
+
+	fileSystem, ok := m.fsmap.Get(fsName)
+	if !ok {
+		m.logger.Error("use of unregistered filesystem", zap.String("fs", fsName))
+		return false
+	}
 	type matchCandidate struct {
 		fullpath, relative, splitRemainder string
 	}
@@ -368,7 +377,7 @@ func (m MatchFile) selectFile(r *http.Request) (matched bool) {
 		if runtime.GOOS == "windows" {
 			globResults = []string{fullPattern} // precious Windows
 		} else {
-			globResults, err = fs.Glob(m.fileSystem, fullPattern)
+			globResults, err = fs.Glob(fileSystem, fullPattern)
 			if err != nil {
 				m.logger.Error("expanding glob", zap.Error(err))
 			}
@@ -410,7 +419,7 @@ func (m MatchFile) selectFile(r *http.Request) (matched bool) {
 			}
 			candidates := makeCandidates(pattern)
 			for _, c := range candidates {
-				if info, exists := m.strictFileExists(c.fullpath); exists {
+				if info, exists := m.strictFileExists(fileSystem, c.fullpath); exists {
 					setPlaceholders(c, info)
 					return true
 				}
@@ -424,7 +433,7 @@ func (m MatchFile) selectFile(r *http.Request) (matched bool) {
 		for _, pattern := range m.TryFiles {
 			candidates := makeCandidates(pattern)
 			for _, c := range candidates {
-				info, err := fs.Stat(m.fileSystem, c.fullpath)
+				info, err := fs.Stat(fileSystem, c.fullpath)
 				if err == nil && info.Size() > largestSize {
 					largestSize = info.Size()
 					largest = c
@@ -445,7 +454,7 @@ func (m MatchFile) selectFile(r *http.Request) (matched bool) {
 		for _, pattern := range m.TryFiles {
 			candidates := makeCandidates(pattern)
 			for _, c := range candidates {
-				info, err := fs.Stat(m.fileSystem, c.fullpath)
+				info, err := fs.Stat(fileSystem, c.fullpath)
 				if err == nil && (smallestSize == 0 || info.Size() < smallestSize) {
 					smallestSize = info.Size()
 					smallest = c
@@ -465,7 +474,7 @@ func (m MatchFile) selectFile(r *http.Request) (matched bool) {
 		for _, pattern := range m.TryFiles {
 			candidates := makeCandidates(pattern)
 			for _, c := range candidates {
-				info, err := fs.Stat(m.fileSystem, c.fullpath)
+				info, err := fs.Stat(fileSystem, c.fullpath)
 				if err == nil &&
 					(recentInfo == nil || info.ModTime().After(recentInfo.ModTime())) {
 					recent = c
@@ -503,8 +512,8 @@ func parseErrorCode(input string) error {
 // the file must also be a directory; if it does
 // NOT end in a forward slash, the file must NOT
 // be a directory.
-func (m MatchFile) strictFileExists(file string) (os.FileInfo, bool) {
-	info, err := fs.Stat(m.fileSystem, file)
+func (m MatchFile) strictFileExists(fileSystem fs.FS, file string) (os.FileInfo, bool) {
+	info, err := fs.Stat(fileSystem, file)
 	if err != nil {
 		// in reality, this can be any error
 		// such as permission or even obscure
@@ -561,20 +570,17 @@ func indexFold(haystack, needle string) int {
 
 // isCELTryFilesLiteral returns whether the expression resolves to a map literal containing
 // only string keys with or a placeholder call.
-func isCELTryFilesLiteral(e *exprpb.Expr) bool {
-	switch e.GetExprKind().(type) {
-	case *exprpb.Expr_StructExpr:
-		structExpr := e.GetStructExpr()
-		if structExpr.GetMessageName() != "" {
-			return false
-		}
-		for _, entry := range structExpr.GetEntries() {
-			mapKey := entry.GetMapKey()
-			mapVal := entry.GetValue()
+func isCELTryFilesLiteral(e ast.Expr) bool {
+	switch e.Kind() {
+	case ast.MapKind:
+		mapExpr := e.AsMap()
+		for _, entry := range mapExpr.Entries() {
+			mapKey := entry.AsMapEntry().Key()
+			mapVal := entry.AsMapEntry().Value()
 			if !isCELStringLiteral(mapKey) {
 				return false
 			}
-			mapKeyStr := mapKey.GetConstExpr().GetStringValue()
+			mapKeyStr := mapKey.AsLiteral().ConvertToType(types.StringType).Value()
 			if mapKeyStr == "try_files" || mapKeyStr == "split_path" {
 				if !isCELStringListLiteral(mapVal) {
 					return false
@@ -588,74 +594,85 @@ func isCELTryFilesLiteral(e *exprpb.Expr) bool {
 			}
 		}
 		return true
+
+	case ast.UnspecifiedExprKind, ast.CallKind, ast.ComprehensionKind, ast.IdentKind, ast.ListKind, ast.LiteralKind, ast.SelectKind, ast.StructKind:
+		// appeasing the linter :)
 	}
 	return false
 }
 
 // isCELStringExpr indicates whether the expression is a supported string expression
-func isCELStringExpr(e *exprpb.Expr) bool {
+func isCELStringExpr(e ast.Expr) bool {
 	return isCELStringLiteral(e) || isCELCaddyPlaceholderCall(e) || isCELConcatCall(e)
 }
 
 // isCELStringLiteral returns whether the expression is a CEL string literal.
-func isCELStringLiteral(e *exprpb.Expr) bool {
-	switch e.GetExprKind().(type) {
-	case *exprpb.Expr_ConstExpr:
-		constant := e.GetConstExpr()
-		switch constant.GetConstantKind().(type) {
-		case *exprpb.Constant_StringValue:
+func isCELStringLiteral(e ast.Expr) bool {
+	switch e.Kind() {
+	case ast.LiteralKind:
+		constant := e.AsLiteral()
+		switch constant.Type() {
+		case types.StringType:
 			return true
 		}
+	case ast.UnspecifiedExprKind, ast.CallKind, ast.ComprehensionKind, ast.IdentKind, ast.ListKind, ast.MapKind, ast.SelectKind, ast.StructKind:
+		// appeasing the linter :)
 	}
 	return false
 }
 
 // isCELCaddyPlaceholderCall returns whether the expression is a caddy placeholder call.
-func isCELCaddyPlaceholderCall(e *exprpb.Expr) bool {
-	switch e.GetExprKind().(type) {
-	case *exprpb.Expr_CallExpr:
-		call := e.GetCallExpr()
-		if call.GetFunction() == "caddyPlaceholder" {
+func isCELCaddyPlaceholderCall(e ast.Expr) bool {
+	switch e.Kind() {
+	case ast.CallKind:
+		call := e.AsCall()
+		if call.FunctionName() == "caddyPlaceholder" {
 			return true
 		}
+	case ast.UnspecifiedExprKind, ast.ComprehensionKind, ast.IdentKind, ast.ListKind, ast.LiteralKind, ast.MapKind, ast.SelectKind, ast.StructKind:
+		// appeasing the linter :)
 	}
 	return false
 }
 
 // isCELConcatCall tests whether the expression is a concat function (+) with string, placeholder, or
 // other concat call arguments.
-func isCELConcatCall(e *exprpb.Expr) bool {
-	switch e.GetExprKind().(type) {
-	case *exprpb.Expr_CallExpr:
-		call := e.GetCallExpr()
-		if call.GetTarget() != nil {
+func isCELConcatCall(e ast.Expr) bool {
+	switch e.Kind() {
+	case ast.CallKind:
+		call := e.AsCall()
+		if call.Target().Kind() != ast.UnspecifiedExprKind {
 			return false
 		}
-		if call.GetFunction() != operators.Add {
+		if call.FunctionName() != operators.Add {
 			return false
 		}
-		for _, arg := range call.GetArgs() {
+		for _, arg := range call.Args() {
 			if !isCELStringExpr(arg) {
 				return false
 			}
 		}
 		return true
+	case ast.UnspecifiedExprKind, ast.ComprehensionKind, ast.IdentKind, ast.ListKind, ast.LiteralKind, ast.MapKind, ast.SelectKind, ast.StructKind:
+		// appeasing the linter :)
 	}
 	return false
 }
 
 // isCELStringListLiteral returns whether the expression resolves to a list literal
 // containing only string constants or a placeholder call.
-func isCELStringListLiteral(e *exprpb.Expr) bool {
-	switch e.GetExprKind().(type) {
-	case *exprpb.Expr_ListExpr:
-		list := e.GetListExpr()
-		for _, elem := range list.GetElements() {
+func isCELStringListLiteral(e ast.Expr) bool {
+	switch e.Kind() {
+	case ast.ListKind:
+		list := e.AsList()
+		for _, elem := range list.Elements() {
 			if !isCELStringExpr(elem) {
 				return false
 			}
 		}
 		return true
+	case ast.UnspecifiedExprKind, ast.CallKind, ast.ComprehensionKind, ast.IdentKind, ast.LiteralKind, ast.MapKind, ast.SelectKind, ast.StructKind:
+		// appeasing the linter :)
 	}
 	return false
 }

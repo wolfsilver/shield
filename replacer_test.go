@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -69,7 +70,7 @@ func TestReplacer(t *testing.T) {
 		},
 		{
 			input:  `\}`,
-			expect: `\}`,
+			expect: `}`,
 		},
 		{
 			input:  "{}",
@@ -164,6 +165,10 @@ func TestReplacer(t *testing.T) {
 			input:  string([]byte{0x26, 0x00, 0x83, 0x7B, 0x84, 0x07, 0x5C, 0x7D, 0x84}),
 			expect: string([]byte{0x26, 0x00, 0x83, 0x7B, 0x84, 0x07, 0x7D, 0x84}),
 		},
+		{
+			input:  `\\}`,
+			expect: `\}`,
+		},
 	} {
 		actual := rep.ReplaceAll(tc.input, tc.empty)
 		if actual != tc.expect {
@@ -234,6 +239,7 @@ func TestReplacerSet(t *testing.T) {
 
 func TestReplacerReplaceKnown(t *testing.T) {
 	rep := Replacer{
+		mapMutex: &sync.RWMutex{},
 		providers: []ReplacerFunc{
 			// split our possible vars to two functions (to test if both functions are called)
 			func(key string) (val any, ok bool) {
@@ -306,6 +312,7 @@ func TestReplacerReplaceKnown(t *testing.T) {
 
 func TestReplacerDelete(t *testing.T) {
 	rep := Replacer{
+		mapMutex: &sync.RWMutex{},
 		static: map[string]any{
 			"key1": "val1",
 			"key2": "val2",
@@ -459,5 +466,6 @@ func testReplacer() Replacer {
 	return Replacer{
 		providers: make([]ReplacerFunc, 0),
 		static:    make(map[string]any),
+		mapMutex:  &sync.RWMutex{},
 	}
 }
