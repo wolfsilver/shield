@@ -1,5 +1,16 @@
 FROM caddy:builder-alpine as base
 
+# use cf go https://github.com/cloudflare/go
+RUN apk add --no-cache bash \
+	&& cd /root \
+	&& git clone https://github.com/cloudflare/go \
+	&& cd go/src \
+	&& ./make.bash \
+	# add /root/go/bin to PATH
+	&& echo 'export PATH=/root/go/bin:$PATH' >> /root/.bashrc
+
+ENV PATH /root/go/bin:$PATH
+
 # ENV CADDY_VERSION v2.7.4
 
 RUN set -eux; xcaddy build \
