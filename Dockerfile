@@ -11,7 +11,7 @@ RUN apk add --no-cache bash \
 
 ENV PATH /root/go/bin:$PATH
 
-ARG CADDY_VERSION=${CADDY_VERSION}
+ARG CADDY_VERSION=2.7.6
 
 RUN set -eux; echo ${CADDY_VERSION}
 
