@@ -11,7 +11,7 @@ RUN apk add --no-cache bash \
 
 ENV PATH /root/go/bin:$PATH
 
-# ENV CADDY_VERSION v2.7.4
+ENV CADDY_VERSION ${CADDY_VERSION}
 
 RUN set -eux; xcaddy build \
 		--with github.com/caddyserver/caddy/v2=github.com/wolfsilver/shield/v2@SHIELD_TAG	 \

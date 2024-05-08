@@ -38,7 +38,7 @@ jobs:
 
       - name: update Dockerfile with tag # update with current tag
         run: |
-          echo "CADDY_VERSION=${{ env.CADDY_VERSION }}"
+          echo "CADDY_VERSION=${CADDY_VERSION}"
           # 如果GITHUB_REF以refs/heads/开头，则使用sha
           if [[ $GITHUB_REF == refs/heads/* ]]; then
             tag=${GITHUB_SHA:0:7}
