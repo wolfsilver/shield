@@ -44,6 +44,7 @@ jobs:
           if [ -z "$tag" ]; then
             tag=${GITHUB_SHA:0:7}
           fi
+          echo "tag=${tag}"
           sed -i "s/SHIELD_TAG/${tag}/g" Dockerfile
           cat Dockerfile
 
