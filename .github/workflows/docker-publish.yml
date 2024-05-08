@@ -39,11 +39,13 @@ jobs:
       - name: update Dockerfile with tag # update with current tag
         run: |
           echo "CADDY_VERSION=${{ env.CADDY_VERSION }}"
-          tag=${GITHUB_REF#refs/tags/}
-          # if tag is empty, use git sha
-          if [ -z "$tag" ]; then
+          # 如果GITHUB_REF以refs/heads/开头，则使用sha
+          if [[ $GITHUB_REF == refs/heads/* ]]; then
             tag=${GITHUB_SHA:0:7}
+          else
+            tag=${GITHUB_REF#refs/tags/}
           fi
+
           echo "tag=${tag}"
           sed -i "s/SHIELD_TAG/${tag}/g" Dockerfile
           cat Dockerfile
