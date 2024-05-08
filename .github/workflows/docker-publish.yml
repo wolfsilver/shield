@@ -17,8 +17,8 @@ env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
-  # version
-  CADDY_VERSION:
+  # caddy version
+  CADDY_VERSION: ${{ vars.CADDY_VERSION }}
 
 
 jobs:
@@ -38,7 +38,12 @@ jobs:
 
       - name: update Dockerfile with tag # update with current tag
         run: |
+          echo "CADDY_VERSION=${{ env.CADDY_VERSION }}"
           tag=${GITHUB_REF#refs/tags/}
+          # if tag is empty, use git sha
+          if [ -z "$tag" ]; then
+            tag=${GITHUB_SHA:0:7}
+          fi
           sed -i "s/SHIELD_TAG/${tag}/g" Dockerfile
           cat Dockerfile
 
