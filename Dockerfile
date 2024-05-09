@@ -12,6 +12,7 @@ RUN apk add --no-cache bash \
 ENV PATH /root/go/bin:$PATH
 
 ARG CADDY_VERSION
+ARG XCADDY_GO_BUILD_FLAGS="-ldflags '-w -s -X github.com/caddyserver/caddy/v2.CustomVersion=shield' -trimpath -tags nobadger"
 
 RUN set -eux; echo ${CADDY_VERSION}
 
