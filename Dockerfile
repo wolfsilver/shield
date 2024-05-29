@@ -22,7 +22,7 @@ RUN set -eux; echo ${CADDY_VERSION}
 
 RUN set -eux; xcaddy build \
 		--with github.com/caddyserver/caddy/v2=github.com/wolfsilver/shield/v2@SHIELD_TAG	 \
-		--with github.com/caddyserver/forwardproxy@master=github.com/wolfsilver/forwardproxy@naive \
+		--with github.com/caddyserver/forwardproxy@master=github.com/wolfsilver/forwardproxy@efac36f \
 		--with github.com/caddyserver/transform-encoder \
 		--with github.com/mholt/caddy-events-exec \
 		--with github.com/caddy-dns/cloudflare \
