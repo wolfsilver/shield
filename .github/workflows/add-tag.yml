@@ -20,7 +20,7 @@ jobs:
       - name: Add tag
         run: |
           git config --global user.name 'wolfsilver'
-          git config --global user.email 'wolfsilver@users.noreply.github.com'
+          git config --global user.email '2452450+wolfsilver@users.noreply.github.com'
           echo "tag=${{ inputs.tag-name }}"
           git tag ${{ inputs.tag-name }}
           git push origin ${{ inputs.tag-name }}
