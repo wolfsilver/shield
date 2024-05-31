@@ -14,9 +14,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.TOKEN }}
 
       - name: Add tag
         run: |
+          git config --global user.name 'wolfsilver'
+          git config --global user.email 'wolfsilver@users.noreply.github.com'
           echo "tag=${{ inputs.tag-name }}"
           git tag ${{ inputs.tag-name }}
           git push origin ${{ inputs.tag-name }}
