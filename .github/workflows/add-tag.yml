@@ -2,12 +2,10 @@ name: add tag
 
 on:
   workflow_dispatch:
-
-
-inputs:
-  tag-name:
-    description: 'input tag'
-    required: true
+    inputs:
+      tag-name:
+        description: 'input tag'
+        required: true
 
 
 jobs:
