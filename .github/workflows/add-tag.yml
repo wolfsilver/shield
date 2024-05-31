@@ -1,0 +1,24 @@
+name: add tag
+
+on:
+  workflow_dispatch:
+
+
+inputs:
+  tag-name:
+    description: 'input tag'
+    required: true
+
+
+jobs:
+  add-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Add tag
+        run: |
+          echo "tag=${{ inputs.tag-name }}"
+          git tag ${{ inputs.tag-name }}
+          git push origin ${{ inputs.tag-name }}
