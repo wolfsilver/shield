@@ -306,3 +306,81 @@ func TestFileModeJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestFileModeToJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    fileMode
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "none zero",
+			mode:    0644,
+			want:    `"0644"`,
+			wantErr: false,
+		},
+		{
+			name:    "zero mode",
+			mode:    0,
+			want:    `"0000"`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b []byte
+			var err error
+
+			if b, err = json.Marshal(&tt.mode); (err != nil) != tt.wantErr {
+				t.Fatalf("MarshalJSON() error = %v, want %v", err, tt.wantErr)
+			}
+
+			got := string(b[:])
+
+			if got != tt.want {
+				t.Errorf("got mode %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFileModeModification(t *testing.T) {
+	m := syscall.Umask(0o000)
+	defer syscall.Umask(m)
+
+	dir, err := os.MkdirTemp("", "caddytest")
+	if err != nil {
+		t.Fatalf("failed to create tempdir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	fpath := path.Join(dir, "test.log")
+	f_tmp, err := os.OpenFile(fpath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0600))
+	if err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	f_tmp.Close()
+
+	fw := FileWriter{
+		Mode:     0o666,
+		Filename: fpath,
+	}
+
+	logger, err := fw.OpenWriter()
+	if err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	defer logger.Close()
+
+	st, err := os.Stat(fpath)
+	if err != nil {
+		t.Fatalf("failed to check file permissions: %v", err)
+	}
+
+	want := os.FileMode(fw.Mode)
+	if st.Mode() != want {
+		t.Errorf("file mode is %v, want %v", st.Mode(), want)
+	}
+}

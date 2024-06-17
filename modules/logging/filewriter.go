@@ -59,6 +59,11 @@ func (m *fileMode) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// MarshalJSON satisfies json.Marshaler.
+func (m *fileMode) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("\"%04o\"", *m)), nil
+}
+
 // parseFileMode parses a file mode string,
 // adding support for `chmod` unix command like
 // 1 to 4 digital octal values.
@@ -162,8 +167,18 @@ func (fw FileWriter) OpenWriter() (io.WriteCloser, error) {
 			fw.RollKeepDays = 90
 		}
 
-		f_tmp, _ := os.OpenFile(fw.Filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(fw.Mode))
+		// create the file if it does not exist with the right mode.
+		// lumberjack will reuse the file mode across log rotation.
+		f_tmp, err := os.OpenFile(fw.Filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(fw.Mode))
+		if err != nil {
+			return nil, err
+		}
 		f_tmp.Close()
+		// ensure already existing files have the right mode,
+		// since OpenFile will not set the mode in such case.
+		if err = os.Chmod(fw.Filename, os.FileMode(fw.Mode)); err != nil {
+			return nil, err
+		}
 
 		return &lumberjack.Logger{
 			Filename:   fw.Filename,
