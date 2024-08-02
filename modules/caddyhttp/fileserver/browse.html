@@ -1,10 +1,17 @@
+{{ $nonce := uuidv4 -}}
+{{ $nonceAttribute := print "nonce=" (quote $nonce) -}}
+{{ $csp := printf "default-src 'none'; img-src 'self'; object-src 'none'; base-uri 'none'; script-src 'nonce-%s'; style-src 'nonce-%s'; frame-ancestors 'self'; form-action 'self';" $nonce $nonce -}}
+{{/* To disable the Content-Security-Policy, set this to false */}}{{ $enableCsp := true -}}
+{{ if $enableCsp -}}
+  {{- .RespHeader.Set "Content-Security-Policy" $csp -}}
+{{ end -}}
 {{- define "icon"}}
 	{{- if .IsDir}}
 		{{- if .IsSymlink}}
 		<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-folder-filled" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
 			<path stroke="none" d="M0 0h24v24H0z" fill="none"/>
 			<path d="M9 3a1 1 0 0 1 .608 .206l.1 .087l2.706 2.707h6.586a3 3 0 0 1 2.995 2.824l.005 .176v8a3 3 0 0 1 -2.824 2.995l-.176 .005h-14a3 3 0 0 1 -2.995 -2.824l-.005 -.176v-11a3 3 0 0 1 2.824 -2.995l.176 -.005h4z" stroke-width="0" fill="currentColor"/>
-			<path fill="#000" d="M2.795 17.306c0-2.374 1.792-4.314 4.078-4.538v-1.104a.38.38 0 0 1 .651-.272l2.45 2.492a.132.132 0 0 1 0 .188l-2.45 2.492a.381.381 0 0 1-.651-.272V15.24c-1.889.297-3.436 1.39-3.817 3.26a2.809 2.809 0 0 1-.261-1.193Z" style="stroke-width:.127478"/>
+			<path fill="#000" d="M2.795 17.306c0-2.374 1.792-4.314 4.078-4.538v-1.104a.38.38 0 0 1 .651-.272l2.45 2.492a.132.132 0 0 1 0 .188l-2.45 2.492a.381.381 0 0 1-.651-.272V15.24c-1.889.297-3.436 1.39-3.817 3.26a2.809 2.809 0 0 1-.261-1.193Z" stroke-width=".127478"/>
 		</svg>
 		{{- else}}
 		<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-folder-filled" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -303,7 +310,7 @@
 		<meta charset="utf-8">
 		<meta name="color-scheme" content="light dark">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
+<style {{ $nonceAttribute }}>
 * { padding: 0; margin: 0; box-sizing: border-box; }
 
 body {
@@ -340,6 +347,10 @@ svg,
 .go-up {
 	color: #333;
 	text-decoration: none;
+}
+
+#layout-list, #layout-grid {
+	cursor: pointer;
 }
 
 .wrapper {
@@ -768,10 +779,10 @@ footer {
 
 </style>
 {{- if eq .Layout "grid"}}
-<style>.wrapper { max-width: none; } main { margin-top: 1px; }</style>
+<style {{ $nonceAttribute }}>.wrapper { max-width: none; } main { margin-top: 1px; }</style>
 {{- end}}
 </head>
-<body onload="initPage()">
+<body>
 	<header>
 		<div class="wrapper">
 			<div class="breadcrumbs">Folder Path</div>
@@ -799,7 +810,7 @@ footer {
 						</span>
 						{{- end}}
 					</div>
-					<a href="javascript:queryParam('layout', '')" id="layout-list" class='layout{{if eq $.Layout "list" ""}}current{{end}}'>
+					<a id="layout-list" class='layout{{if eq $.Layout "list" ""}}current{{end}}'>
 						<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-layout-list" width="16" height="16" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
 							<path stroke="none" d="M0 0h24v24H0z" fill="none"/>
 							<path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/>
@@ -807,7 +818,7 @@ footer {
 						</svg>
 						List
 					</a>
-					<a href="javascript:queryParam('layout', 'grid')" id="layout-grid" class='layout{{if eq $.Layout "grid"}}current{{end}}'>
+					<a id="layout-grid" class='layout{{if eq $.Layout "grid"}}current{{end}}'>
 						<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-layout-grid" width="16" height="16" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
 							<path stroke="none" d="M0 0h24v24H0z" fill="none"/>
 							<path d="M4 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/>
@@ -886,7 +897,7 @@ footer {
 									<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/>
 									<path d="M21 21l-6 -6"/>
 								</svg>
-								<input type="search" placeholder="Search" id="filter" onkeyup='filter()'>
+								<input type="search" placeholder="Search" id="filter">
 							</div>
 						</th>
 						<th>
@@ -980,7 +991,7 @@ footer {
 							<div class="sizebar">
 								<div class="sizebar-bar"></div>
 								<div class="sizebar-text">
-									{{.HumanSize}}
+									{{if .IsSymlink}}↱&nbsp;{{end}}{{.HumanSize}}
 								</div>
 							</div>
 						</td>
@@ -1001,7 +1012,7 @@ footer {
 			Served with Shield
 		</footer>
 
-		<script>
+		<script {{ $nonceAttribute }}>
 			const filterEl = document.getElementById('filter');
 			filterEl?.focus({ preventScroll: true });
 
@@ -1046,6 +1057,20 @@ footer {
 					}
 				});
 			}
+
+			const filterElem = document.getElementById("filter");
+			if (filterElem) {
+				filterElem.addEventListener("keyup", filter);
+			}
+
+			document.getElementById("layout-list").addEventListener("click", function() {
+				queryParam('layout', '');
+			});
+			document.getElementById("layout-grid").addEventListener("click", function() {
+				queryParam('layout', 'grid');
+			});
+
+			window.addEventListener("load", initPage);
 
 			function queryParam(k, v) {
 				const qs = new URLSearchParams(window.location.search);
