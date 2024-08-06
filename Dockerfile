@@ -26,8 +26,8 @@ RUN set -eux; xcaddy build \
 		--with github.com/caddyserver/transform-encoder \
 		--with github.com/mholt/caddy-events-exec \
 		--with github.com/caddy-dns/cloudflare \
-		--with github.com/ueffel/caddy-brotli \
 		--output /usr/bin/caddy
+		# --with github.com/ueffel/caddy-brotli \
 
 FROM caddy:alpine
 
