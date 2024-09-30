@@ -30,6 +30,7 @@ import (
 	"github.com/caddyserver/zerossl"
 	"github.com/mholt/acmez/v2/acme"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
@@ -264,6 +265,12 @@ func (iss *ACMEIssuer) Revoke(ctx context.Context, cert certmagic.CertificateRes
 // to be accessed and manipulated.
 func (iss *ACMEIssuer) GetACMEIssuer() *ACMEIssuer { return iss }
 
+// GetRenewalInfo wraps the underlying GetRenewalInfo method and satisfies
+// the CertMagic interface for ARI support.
+func (iss *ACMEIssuer) GetRenewalInfo(ctx context.Context, cert certmagic.Certificate) (acme.RenewalInfo, error) {
+	return iss.issuer.GetRenewalInfo(ctx, cert)
+}
+
 // generateZeroSSLEABCredentials generates ZeroSSL EAB credentials for the primary contact email
 // on the issuer. It should only be usedif the CA endpoint is ZeroSSL. An email address is required.
 func (iss *ACMEIssuer) generateZeroSSLEABCredentials(ctx context.Context, acct acme.Account) (*acme.EAB, acme.Account, error) {
@@ -315,7 +322,9 @@ func (iss *ACMEIssuer) generateZeroSSLEABCredentials(ctx context.Context, acct a
 		return nil, acct, fmt.Errorf("failed getting EAB credentials: HTTP %d", resp.StatusCode)
 	}
 
-	iss.logger.Info("generated EAB credentials", zap.String("key_id", result.EABKID))
+	if c := iss.logger.Check(zapcore.InfoLevel, "generated EAB credentials"); c != nil {
+		c.Write(zap.String("key_id", result.EABKID))
+	}
 
 	return &acme.EAB{
 		KeyID:  result.EABKID,
@@ -649,10 +658,11 @@ type ChainPreference struct {
 
 // Interface guards
 var (
-	_ certmagic.PreChecker  = (*ACMEIssuer)(nil)
-	_ certmagic.Issuer      = (*ACMEIssuer)(nil)
-	_ certmagic.Revoker     = (*ACMEIssuer)(nil)
-	_ caddy.Provisioner     = (*ACMEIssuer)(nil)
-	_ ConfigSetter          = (*ACMEIssuer)(nil)
-	_ caddyfile.Unmarshaler = (*ACMEIssuer)(nil)
+	_ certmagic.PreChecker        = (*ACMEIssuer)(nil)
+	_ certmagic.Issuer            = (*ACMEIssuer)(nil)
+	_ certmagic.Revoker           = (*ACMEIssuer)(nil)
+	_ certmagic.RenewalInfoGetter = (*ACMEIssuer)(nil)
+	_ caddy.Provisioner           = (*ACMEIssuer)(nil)
+	_ ConfigSetter                = (*ACMEIssuer)(nil)
+	_ caddyfile.Unmarshaler       = (*ACMEIssuer)(nil)
 )
