@@ -40,7 +40,7 @@ type ListenerWrapper struct {
 	Allow []string `json:"allow,omitempty"`
 	allow []netip.Prefix
 
-	// Denby is an optional list of CIDR ranges to
+	// Deny is an optional list of CIDR ranges to
 	// deny PROXY headers from.
 	Deny []string `json:"deny,omitempty"`
 	deny []netip.Prefix
@@ -72,7 +72,7 @@ func (pp *ListenerWrapper) Provision(ctx caddy.Context) error {
 
 	pp.policy = func(options goproxy.ConnPolicyOptions) (goproxy.Policy, error) {
 		// trust unix sockets
-		if network := options.Upstream.Network(); caddy.IsUnixNetwork(network) {
+		if network := options.Upstream.Network(); caddy.IsUnixNetwork(network) || caddy.IsFdNetwork(network) {
 			return goproxy.USE, nil
 		}
 		ret := pp.FallbackPolicy
