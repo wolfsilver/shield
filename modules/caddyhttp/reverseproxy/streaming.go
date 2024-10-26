@@ -66,6 +66,7 @@ func (h *Handler) handleUpgradeResponse(logger *zap.Logger, wg *sync.WaitGroup, 
 	// write header first, response headers should not be counted in size
 	// like the rest of handler chain.
 	copyHeader(rw.Header(), res.Header)
+	normalizeWebsocketHeaders(rw.Header())
 	rw.WriteHeader(res.StatusCode)
 
 	logger.Debug("upgrading connection")
@@ -102,7 +103,7 @@ func (h *Handler) handleUpgradeResponse(logger *zap.Logger, wg *sync.WaitGroup, 
 	start := time.Now()
 	defer func() {
 		conn.Close()
-		if c := logger.Check(zapcore.DebugLevel, "hijack failed on protocol switch"); c != nil {
+		if c := logger.Check(zapcore.DebugLevel, "connection closed"); c != nil {
 			c.Write(zap.Duration("duration", time.Since(start)))
 		}
 	}()
