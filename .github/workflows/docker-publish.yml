@@ -36,6 +36,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set Caddy version if empty
+        run: |
+          if [ -z "$CADDY_VERSION" ]; then
+            echo "CADDY_VERSION is empty, fetching latest release..."
+            LATEST_TAG=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+            echo "Latest Caddy version: ${LATEST_TAG}"
+            echo "CADDY_VERSION=${LATEST_TAG}" >> $GITHUB_ENV
+          else
+            echo "Using specified Caddy version: ${CADDY_VERSION}"
+          fi
+
       - name: update Dockerfile with tag # update with current tag
         run: |
           echo "CADDY_VERSION=${CADDY_VERSION}"

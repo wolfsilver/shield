@@ -1,3 +1,4 @@
+# https://github.com/caddyserver/caddy-docker/blob/master/2.10/builder/Dockerfile
 FROM golang:1.24-alpine3.21 as base
 
 RUN apk add --no-cache \
