@@ -27,24 +27,20 @@ jobs:
             LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
             echo "Latest tag: $LATEST_TAG"
 
-            # 分割版本号
-            VERSION_PARTS=(${LATEST_TAG//./ })
-            PREFIX=${LATEST_TAG%%[0-9]*}
-            VERSION_PARTS=(${LATEST_TAG#$PREFIX//./ })
+            # 提取前缀(如 "v")和版本号部分
+            PREFIX=$(echo $LATEST_TAG | sed -E 's/[0-9].*//')
+            VERSION=$(echo $LATEST_TAG | sed -E 's/^[^0-9]*//')
 
-            # 将最后一位版本号加1
-            LAST_PART_INDEX=$((${#VERSION_PARTS[@]}-1))
-            VERSION_PARTS[$LAST_PART_INDEX]=$((${VERSION_PARTS[$LAST_PART_INDEX]}+1))
+            # 分割版本号
+            MAJOR=$(echo $VERSION | cut -d. -f1)
+            MINOR=$(echo $VERSION | cut -d. -f2)
+            PATCH=$(echo $VERSION | cut -d. -f3 | cut -d+ -f1)  # 处理可能存在的元数据（如 1.2.3+meta）
+
+            # 将PATCH版本号加1
+            NEW_PATCH=$((PATCH + 1))
 
             # 组合新tag
-            NEW_TAG="$PREFIX"
-            for i in "${!VERSION_PARTS[@]}"; do
-              if [ $i -eq 0 ]; then
-                NEW_TAG="${NEW_TAG}${VERSION_PARTS[$i]}"
-              else
-                NEW_TAG="${NEW_TAG}.${VERSION_PARTS[$i]}"
-              fi
-            done
+            NEW_TAG="${PREFIX}${MAJOR}.${MINOR}.${NEW_PATCH}"
 
             echo "Generated new tag: $NEW_TAG"
             TAG_TO_PUSH=$NEW_TAG
