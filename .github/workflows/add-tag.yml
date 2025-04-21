@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag-name:
-        description: 'input tag'
-        required: true
-
+        description: 'input tag (leave empty to auto-increment latest tag)'
+        required: false
 
 jobs:
   add-tag:
@@ -16,11 +15,43 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.TOKEN }}
+          fetch-depth: 0  # 获取所有标签和历史记录
 
       - name: Add tag
         run: |
           git config --global user.name 'wolfsilver'
           git config --global user.email '2452450+wolfsilver@users.noreply.github.com'
-          echo "tag=${{ inputs.tag-name }}"
-          git tag ${{ inputs.tag-name }}
-          git push origin ${{ inputs.tag-name }}
+
+          if [ -z "${{ inputs.tag-name }}" ]; then
+            # 如果tag-name为空，获取最新tag并增加版本号
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            echo "Latest tag: $LATEST_TAG"
+
+            # 分割版本号
+            VERSION_PARTS=(${LATEST_TAG//./ })
+            PREFIX=${LATEST_TAG%%[0-9]*}
+            VERSION_PARTS=(${LATEST_TAG#$PREFIX//./ })
+
+            # 将最后一位版本号加1
+            LAST_PART_INDEX=$((${#VERSION_PARTS[@]}-1))
+            VERSION_PARTS[$LAST_PART_INDEX]=$((${VERSION_PARTS[$LAST_PART_INDEX]}+1))
+
+            # 组合新tag
+            NEW_TAG="$PREFIX"
+            for i in "${!VERSION_PARTS[@]}"; do
+              if [ $i -eq 0 ]; then
+                NEW_TAG="${NEW_TAG}${VERSION_PARTS[$i]}"
+              else
+                NEW_TAG="${NEW_TAG}.${VERSION_PARTS[$i]}"
+              fi
+            done
+
+            echo "Generated new tag: $NEW_TAG"
+            TAG_TO_PUSH=$NEW_TAG
+          else
+            TAG_TO_PUSH="${{ inputs.tag-name }}"
+            echo "Using provided tag: $TAG_TO_PUSH"
+          fi
+
+          git tag $TAG_TO_PUSH
+          git push origin $TAG_TO_PUSH
