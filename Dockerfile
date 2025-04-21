@@ -1,5 +1,5 @@
 # https://github.com/caddyserver/caddy-docker/blob/master/2.10/builder/Dockerfile
-FROM golang:1.24-alpine3.21 as base
+FROM golang:1.24-alpine3.21 AS base
 
 RUN apk add --no-cache \
 	ca-certificates \
@@ -16,7 +16,19 @@ ENV XCADDY_SETCAP 1
 
 # wget https://github.com/caddyserver/xcaddy/releases/latest/download/xcaddy_0.4.4_linux_arm64.tar.gz
 RUN set -eux; \
-	wget -O /tmp/xcaddy.tar.gz "https://github.com/caddyserver/xcaddy/releases/latest/download/xcaddy_0.4.4_linux_arm64.tar.gz"; \
+	LATEST_TAG=$(curl -s https://api.github.com/repos/caddyserver/xcaddy/releases/latest | grep '"tag_name":' | sed -E 's/.*"tag_name": "v([^"]+)".*/\1/') \
+	apkArch="$(apk --print-arch)"; \
+		case "$apkArch" in \
+			x86_64)  binArch='amd64' ;; \
+			armhf)   binArch='armv6' ;; \
+			armv7)   binArch='armv7' ;; \
+			aarch64) binArch='arm64' ;; \
+			ppc64el|ppc64le) binArch='ppc64le' ;; \
+			riscv64) binArch='riscv64' ;; \
+			s390x)   binArch='s390x' ;; \
+			*) echo >&2 "error: unsupported architecture ($apkArch)"; exit 1 ;;\
+		esac; \
+	wget -O /tmp/xcaddy.tar.gz "https://github.com/caddyserver/xcaddy/releases/latest/download/xcaddy_${LATEST_TAG}_linux_${binArch}.tar.gz"; \
 	tar x -z -f /tmp/xcaddy.tar.gz -C /usr/bin xcaddy; \
 	rm -f /tmp/xcaddy.tar.gz; \
 	chmod +x /usr/bin/xcaddy;
