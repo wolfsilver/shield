@@ -1,15 +1,24 @@
-FROM caddy:builder-alpine as base
+FROM golang:1.24-alpine3.21 as base
 
-# use cf go https://github.com/cloudflare/go
-# RUN apk add --no-cache bash \
-# 	&& cd /root \
-# 	&& git clone https://github.com/cloudflare/go \
-# 	&& cd go/src \
-# 	&& ./make.bash \
-# 	# add /root/go/bin to PATH
-# 	&& echo 'export PATH=/root/go/bin:$PATH' >> /root/.bashrc
+RUN apk add --no-cache \
+	ca-certificates \
+	git \
+	libcap
 
-# ENV PATH /root/go/bin:$PATH
+ENV XCADDY_VERSION v0.4.4
+# Configures xcaddy to build with this version of Caddy
+# ENV CADDY_VERSION v2.10.0
+# Configures xcaddy to not clean up post-build (unnecessary in a container)
+ENV XCADDY_SKIP_CLEANUP 1
+# Sets capabilities for output caddy binary to be able to bind to privileged ports
+ENV XCADDY_SETCAP 1
+
+# wget https://github.com/caddyserver/xcaddy/releases/latest/download/xcaddy_0.4.4_linux_arm64.tar.gz
+RUN set -eux; \
+	wget -O /tmp/xcaddy.tar.gz "https://github.com/caddyserver/xcaddy/releases/latest/download/xcaddy_0.4.4_linux_arm64.tar.gz"; \
+	tar x -z -f /tmp/xcaddy.tar.gz -C /usr/bin xcaddy; \
+	rm -f /tmp/xcaddy.tar.gz; \
+	chmod +x /usr/bin/xcaddy;
 
 ARG CADDY_VERSION
 
