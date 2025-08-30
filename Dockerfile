@@ -1,5 +1,5 @@
 # https://github.com/caddyserver/caddy-docker/blob/master/2.10/builder/Dockerfile
-FROM golang:1.24-alpine3.21 AS base
+FROM golang:1.25-alpine3.22 AS base
 
 RUN apk add --no-cache \
 	curl \
@@ -7,7 +7,7 @@ RUN apk add --no-cache \
 	git \
 	libcap
 
-ENV XCADDY_VERSION v0.4.4
+ENV XCADDY_VERSION v0.4.5
 # Configures xcaddy to build with this version of Caddy
 # ENV CADDY_VERSION v2.10.0
 # Configures xcaddy to not clean up post-build (unnecessary in a container)
