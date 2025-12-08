@@ -82,6 +82,7 @@ func init() {
 // `{http.request.tls.proto}` | The negotiated next protocol
 // `{http.request.tls.proto_mutual}` | The negotiated next protocol was advertised by the server
 // `{http.request.tls.server_name}` | The server name requested by the client, if any
+// `{http.request.tls.ech}` | Whether ECH was offered by the client and accepted by the server
 // `{http.request.tls.client.fingerprint}` | The SHA256 checksum of the client certificate
 // `{http.request.tls.client.public_key}` | The public key of the client certificate.
 // `{http.request.tls.client.public_key_sha256}` | The SHA256 checksum of the client's public key.
@@ -346,6 +347,20 @@ func (app *App) Provision(ctx caddy.Context) error {
 				srv.listenerWrappers = append([]caddy.ListenerWrapper{new(tlsPlaceholderWrapper)}, srv.listenerWrappers...)
 			}
 		}
+
+		// set up each packet conn modifier
+		if srv.PacketConnWrappersRaw != nil {
+			vals, err := ctx.LoadModule(srv, "PacketConnWrappersRaw")
+			if err != nil {
+				return fmt.Errorf("loading packet conn wrapper modules: %v", err)
+			}
+			// if any wrappers were configured, they come before the QUIC handshake;
+			// unlike TLS above, there is no QUIC placeholder
+			for _, val := range vals.([]any) {
+				srv.packetConnWrappers = append(srv.packetConnWrappers, val.(caddy.PacketConnWrapper))
+			}
+		}
+
 		// pre-compile the primary handler chain, and be sure to wrap it in our
 		// route handler so that important security checks are done, etc.
 		primaryRoute := emptyHandler
