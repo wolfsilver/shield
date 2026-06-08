@@ -107,7 +107,8 @@ func (cp ConnectionPolicies) TLSConfig(ctx caddy.Context) *tls.Config {
 				if sni, ok := m.(MatchServerName); ok {
 					for _, sniName := range sni {
 						// index for fast lookups during handshakes
-						indexedBySNI[sniName] = append(indexedBySNI[sniName], p)
+						indexName := asciiServerNameForMatch(sniName)
+						indexedBySNI[indexName] = append(indexedBySNI[indexName], p)
 					}
 				}
 			}
@@ -118,7 +119,7 @@ func (cp ConnectionPolicies) TLSConfig(ctx caddy.Context) *tls.Config {
 		// filter policies by SNI first, if possible, to speed things up
 		// when there may be lots of policies
 		possiblePolicies := cp
-		if indexedPolicies, ok := indexedBySNI[hello.ServerName]; ok {
+		if indexedPolicies, ok := indexedBySNI[asciiServerNameForMatch(hello.ServerName)]; ok {
 			possiblePolicies = indexedPolicies
 		}
 
@@ -896,18 +897,19 @@ func (clientauth *ClientAuthentication) ConfigureTLSConfig(cfg *tls.Config) erro
 // Unlike VerifyPeerCertificate, VerifyConnection is called on every
 // connection including resumed sessions, preventing session-resumption bypass.
 func (clientauth *ClientAuthentication) verifyConnection(cs tls.ConnectionState) error {
+	rawCerts := make([][]byte, len(cs.PeerCertificates))
+	for i, cert := range cs.PeerCertificates {
+		rawCerts[i] = cert.Raw
+	}
+
 	// first use any pre-existing custom verification function
 	if clientauth.existingVerifyPeerCert != nil {
-		rawCerts := make([][]byte, len(cs.PeerCertificates))
-		for i, cert := range cs.PeerCertificates {
-			rawCerts[i] = cert.Raw
-		}
 		if err := clientauth.existingVerifyPeerCert(rawCerts, cs.VerifiedChains); err != nil {
 			return err
 		}
 	}
 	for _, verifier := range clientauth.verifiers {
-		if err := verifier.VerifyClientCertificate(nil, cs.VerifiedChains); err != nil {
+		if err := verifier.VerifyClientCertificate(rawCerts, cs.VerifiedChains); err != nil {
 			return err
 		}
 	}
