@@ -268,6 +268,12 @@ func TestRewrite(t *testing.T) {
 			expect: newRequest(t, "GET", "/foo/prefix/bar"),
 		},
 		{
+			// shorter (percent-encoded) path that is not the prefix must be left alone
+			rule:   Rewrite{StripPathPrefix: "/aaaaaa"},
+			input:  newRequest(t, "GET", "/%61%61"),
+			expect: newRequest(t, "GET", "/%61%61"),
+		},
+		{
 			rule: Rewrite{StripPathPrefix: "//prefix"},
 			// scheme and host needed for URL parser to succeed in setting up test
 			input:  newRequest(t, "GET", "http://host//prefix/foo/bar"),
@@ -344,6 +350,19 @@ func TestRewrite(t *testing.T) {
 			rule:   Rewrite{URISubstring: []substrReplacer{{Find: "findme", Replace: "replaced"}}},
 			input:  newRequest(t, "GET", "/foo/findme%2Fbar"),
 			expect: newRequest(t, "GET", "/foo/replaced%2Fbar"),
+		},
+		{
+			rule:   Rewrite{URISubstring: []substrReplacer{{Find: "%28", Replace: "("}}},
+			input:  newRequest(t, "GET", "/hello/%28%29"),
+			expect: newRequest(t, "GET", "/hello/(%29"),
+		},
+		{
+			rule: Rewrite{URISubstring: []substrReplacer{
+				{Find: "%28", Replace: "("},
+				{Find: "%29", Replace: ")"},
+			}},
+			input:  newRequest(t, "GET", "/hello/%28%29"),
+			expect: newRequest(t, "GET", "/hello/()"),
 		},
 
 		{
@@ -468,6 +487,66 @@ func TestQueryOpsRenameNoOpCases(t *testing.T) {
 		repl.Set("http.request.uri", tc.input.RequestURI)
 		repl.Set("http.request.uri.path", tc.input.URL.Path)
 		repl.Set("http.request.uri.query", tc.input.URL.RawQuery)
+
+		tc.ops.do(tc.input, repl)
+
+		if actual := tc.input.URL.Query(); !reflect.DeepEqual(tc.expect, map[string][]string(actual)) {
+			t.Errorf("Test %d: Expected query=%v but got %v", i, tc.expect, actual)
+		}
+	}
+}
+
+func TestQueryOpsReplaceScopedToKey(t *testing.T) {
+	repl := caddy.NewReplacer()
+
+	for i, tc := range []struct {
+		input  *http.Request
+		expect map[string][]string
+		ops    *queryOps
+	}{
+		{
+			// a keyed replace must only touch the named key, even when
+			// other keys hold the same value
+			ops: &queryOps{
+				Replace: []*queryOpsReplacement{{Key: "a", Search: "foo", Replace: "bar"}},
+			},
+			input:  newRequest(t, "GET", "/?a=foo&b=foo"),
+			expect: map[string][]string{"a": {"bar"}, "b": {"foo"}},
+		},
+		{
+			// "*" still replaces across every key
+			ops: &queryOps{
+				Replace: []*queryOpsReplacement{{Key: "*", Search: "foo", Replace: "bar"}},
+			},
+			input:  newRequest(t, "GET", "/?a=foo&b=foo"),
+			expect: map[string][]string{"a": {"bar"}, "b": {"bar"}},
+		},
+		{
+			// a keyed replace against a missing key is a no-op
+			ops: &queryOps{
+				Replace: []*queryOpsReplacement{{Key: "missing", Search: "foo", Replace: "bar"}},
+			},
+			input:  newRequest(t, "GET", "/?a=foo&b=foo"),
+			expect: map[string][]string{"a": {"foo"}, "b": {"foo"}},
+		},
+		{
+			// the regexp branch must also stay scoped to the named key
+			ops: &queryOps{
+				Replace: []*queryOpsReplacement{{Key: "a", SearchRegexp: "f.o", Replace: "bar"}},
+			},
+			input:  newRequest(t, "GET", "/?a=foo&b=foo"),
+			expect: map[string][]string{"a": {"bar"}, "b": {"foo"}},
+		},
+	} {
+		repl.Set("http.request.uri", tc.input.RequestURI)
+		repl.Set("http.request.uri.path", tc.input.URL.Path)
+		repl.Set("http.request.uri.query", tc.input.URL.RawQuery)
+
+		for _, rep := range tc.ops.Replace {
+			if err := rep.Provision(caddy.Context{}); err != nil {
+				t.Fatal(err)
+			}
+		}
 
 		tc.ops.do(tc.input, repl)
 

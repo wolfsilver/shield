@@ -432,7 +432,7 @@ func trimPathPrefix(escapedPath, prefix string) string {
 	}
 
 	// if we iterated through the entire prefix, we found it, so trim it
-	if iPath >= len(prefix) {
+	if iPrefix >= len(prefix) {
 		return escapedPath[iPath:]
 	}
 
@@ -513,10 +513,19 @@ func changePath(req *http.Request, newVal func(pathOrRawPath string) string) {
 	} else {
 		req.URL.Path = newVal(req.URL.Path)
 	}
-	// RawPath is only set if it's different from the normalized Path (std lib)
-	if req.URL.RawPath == req.URL.Path {
+	// RawPath is only needed if it is a valid, non-canonical encoding of Path;
+	// (see #6578). Mirror net/url.URL.setPath by comparing against the default
+	// escaping of Path instead.
+	if req.URL.RawPath == defaultEscapedPath(req.URL.Path) {
 		req.URL.RawPath = ""
 	}
+}
+
+// defaultEscapedPath returns the canonical percent-encoding of p, matching
+// what net/url.URL.EscapedPath() produces when RawPath is empty. It mirrors
+// the comparison net/url.URL.setPath uses to decide whether RawPath is needed.
+func defaultEscapedPath(p string) string {
+	return (&url.URL{Path: p}).EscapedPath()
 }
 
 // queryOps describes the operations to perform on query keys: add, set, rename and delete.
@@ -606,13 +615,15 @@ func (q *queryOps) do(r *http.Request, repl *caddy.Replacer) {
 			continue
 		}
 
-		for fieldName, vals := range query {
-			for i := range vals {
-				if replaceParam.re != nil {
-					query[fieldName][i] = replaceParam.re.ReplaceAllString(query[fieldName][i], replace)
-				} else {
-					query[fieldName][i] = strings.ReplaceAll(query[fieldName][i], search, replace)
-				}
+		vals, ok := query[key]
+		if !ok {
+			continue
+		}
+		for i := range vals {
+			if replaceParam.re != nil {
+				query[key][i] = replaceParam.re.ReplaceAllString(query[key][i], replace)
+			} else {
+				query[key][i] = strings.ReplaceAll(query[key][i], search, replace)
 			}
 		}
 	}
