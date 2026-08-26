@@ -47,7 +47,7 @@ RUN set -eux; xcaddy build \
 		--with github.com/caddyserver/caddy/v2=github.com/wolfsilver/shield/v2@SHIELD_TAG	 \
 		--with github.com/caddyserver/forwardproxy@master=github.com/wolfsilver/forwardproxy@a54b9b8 \
 		--with github.com/caddyserver/transform-encoder \
-		--with github.com/mholt/caddy-l4=github.com/wolfsilver/caddy-l4@b1935c8 \
+		--with github.com/mholt/caddy-l4 \
 		--with github.com/caddy-dns/cloudflare \
 		--output /usr/bin/caddy
 		# --with github.com/mholt/caddy-events-exec \
