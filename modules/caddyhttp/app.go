@@ -59,8 +59,8 @@ func init() {
 //
 // Placeholder | Description
 // ------------|---------------
-// `{http.request.body}` | The request body (⚠️ inefficient; use only for debugging)
-// `{http.request.body_base64}` | The request body, base64-encoded (⚠️ for debugging)
+// `{http.request.body}` | The request body (⚠️ inefficient; use only for debugging); if reading it exceeds a `request_body` `max_size` limit, templates and the `vars` and `vars_regexp` matchers fail the request with HTTP 413 instead of silently returning a truncated body
+// `{http.request.body_base64}` | The request body, base64-encoded (⚠️ for debugging); same 413 behavior on `max_size` limits as `{http.request.body}` in templates and the `vars` matchers
 // `{http.request.cookie.*}` | HTTP request cookie
 // `{http.request.duration}` | Time up to now spent handling the request (after decoding headers from client)
 // `{http.request.duration_ms}` | Same as 'duration', but in milliseconds.
@@ -406,6 +406,15 @@ func (app *App) Provision(ctx caddy.Context) error {
 		}
 		if srv.ReadHeaderTimeout == 0 {
 			srv.ReadHeaderTimeout = defaultReadHeaderTimeout // see #6663
+		}
+		if srv.ReadIdleTimeout == 0 {
+			srv.ReadIdleTimeout = defaultReadIdleTimeout
+		}
+		if srv.WriteIdleTimeout == 0 {
+			srv.WriteIdleTimeout = defaultWriteIdleTimeout
+		}
+		if srv.MaxWriteChunk == 0 {
+			srv.MaxWriteChunk = DefaultMaxWriteChunk
 		}
 	}
 	ctx.Context = oldContext
@@ -891,6 +900,14 @@ const (
 	// long time even on legitimately slow connections or
 	// busy servers to read it.
 	defaultReadHeaderTimeout = caddy.Duration(time.Minute)
+
+	// defaultReadIdleTimeout and defaultWriteIdleTimeout mitigate
+	// slowloris-style attacks on the request body and response write.
+	// Unlike a hard deadline, these are safe defaults even for large
+	// payloads because the deadline is reset on every successful
+	// read/write; only a stalled connection is affected.
+	defaultReadIdleTimeout  = caddy.Duration(time.Minute)
+	defaultWriteIdleTimeout = caddy.Duration(time.Minute)
 )
 
 // Interface guards

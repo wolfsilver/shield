@@ -32,9 +32,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	h3qlog "github.com/quic-go/quic-go/http3/qlog"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -69,10 +67,48 @@ type Server struct {
 	// Default is 1 minute.
 	ReadHeaderTimeout caddy.Duration `json:"read_header_timeout,omitempty"`
 
+	// How long to allow a read from a client's upload to stall before
+	// aborting the connection, reset on every successful read. Unlike
+	// ReadTimeout, which bounds the whole transfer with a single
+	// deadline, this only fires if the connection actually stalls, so
+	// it mitigates slowloris-style attacks without penalizing large
+	// uploads from legitimately slow clients. Combine with ReadTimeout
+	// for a hard ceiling on top.
+	// Default is 1 minute.
+	ReadIdleTimeout caddy.Duration `json:"read_idle_timeout,omitempty"`
+
+	// ReadMinRate, if set, requires the client to sustain at least this
+	// many bytes/second, averaged from the start of the request body
+	// read, or the connection is aborted. Unlike ReadIdleTimeout alone,
+	// this also catches a trickle that sends just enough to never go
+	// idle, but never accumulates real throughput (a "MinRate" in
+	// Apache mod_reqtimeout terms). If zero, no rate is enforced and
+	// ReadIdleTimeout resets to a flat window on every read instead.
+	ReadMinRate int64 `json:"read_min_rate,omitempty"`
+
 	// WriteTimeout is how long to allow a write to a client. Note
 	// that setting this to a small value when serving large files
 	// may negatively affect legitimately slow clients.
 	WriteTimeout caddy.Duration `json:"write_timeout,omitempty"`
+
+	// How long to allow a write to a client to stall before aborting
+	// the connection, reset on every successful write, the same way
+	// ReadIdleTimeout works for reads. A handler that streams a large
+	// response, or pauses between writes (e.g. SSE), is unaffected as
+	// long as each individual write keeps making progress. Combine
+	// with WriteTimeout for a hard ceiling on top.
+	// Default is 1 minute.
+	WriteIdleTimeout caddy.Duration `json:"write_idle_timeout,omitempty"`
+
+	// WriteMinRate is like ReadMinRate, but for writes to the client.
+	WriteMinRate int64 `json:"write_min_rate,omitempty"`
+
+	// MaxWriteChunk bounds how many bytes a single underlying write
+	// operation is allowed to cover, so that WriteIdleTimeout/WriteMinRate
+	// can actually apply between chunks of a large response instead of
+	// being bounded by one deadline for the whole thing (nginx's
+	// sendfile_max_chunk exists for the same reason). Default: 64 KiB.
+	MaxWriteChunk int `json:"max_write_chunk,omitempty"`
 
 	// IdleTimeout is the maximum time to wait for the next request
 	// when keep-alives are enabled. If zero, a default timeout of
@@ -532,6 +568,51 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// guard against slowloris-style attacks by aborting the connection
+	// if a read from the request body or a write to the response
+	// stalls for longer than the configured timeout; the deadline is
+	// reset on every successful read/write, so this doesn't affect
+	// legitimately slow clients as long as they keep making progress.
+	// hardDeadline, anchored to this handler's start, caps how far
+	// that reset can push the deadline out, so an explicitly configured
+	// ReadTimeout/WriteTimeout ceiling still applies on top instead of
+	// being silently overwritten by the first read/write.
+	rc := http.NewResponseController(w)
+	var readHardDeadline, writeHardDeadline time.Time
+	if s.ReadTimeout > 0 {
+		readHardDeadline = start.Add(time.Duration(s.ReadTimeout))
+	}
+	if s.WriteTimeout > 0 {
+		writeHardDeadline = start.Add(time.Duration(s.WriteTimeout))
+	}
+	if s.ReadIdleTimeout > 0 && r.Body != nil {
+		r.Body = &IdleTimeoutReader{
+			ReadCloser: r.Body,
+			Ctrl:       rc,
+			Deadline: IdleDeadline{
+				Start:        start,
+				Timeout:      time.Duration(s.ReadIdleTimeout),
+				MinRate:      s.ReadMinRate,
+				HardDeadline: readHardDeadline,
+			},
+			Logger: s.logger,
+		}
+	}
+	if s.WriteIdleTimeout > 0 {
+		w = &IdleTimeoutWriter{
+			ResponseWriterWrapper: &ResponseWriterWrapper{ResponseWriter: w},
+			Ctrl:                  rc,
+			Deadline: IdleDeadline{
+				Start:        start,
+				Timeout:      time.Duration(s.WriteIdleTimeout),
+				MinRate:      s.WriteMinRate,
+				HardDeadline: writeHardDeadline,
+			},
+			MaxChunk: s.MaxWriteChunk,
+			Logger:   s.logger,
+		}
+	}
+
 	// set the Server header
 	h := w.Header()
 	h["Server"] = serverHeader
@@ -539,7 +620,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// advertise HTTP/3, if enabled
 	if s.h3server != nil && r.ProtoMajor < 3 {
 		if err := s.h3server.SetQUICHeaders(h); err != nil {
-			if c := s.logger.Check(zapcore.ErrorLevel, "setting HTTP/3 Alt-Svc header"); c != nil {
+			lvl := zapcore.ErrorLevel
+			if errors.Is(err, http3.ErrNoAltSvcPort) {
+				lvl = zapcore.DebugLevel
+			}
+			if c := s.logger.Check(lvl, "setting HTTP/3 Alt-Svc header"); c != nil {
 				c.Write(zap.Error(err))
 			}
 		}
@@ -561,9 +646,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	errLog := s.errorLogger.WithLazy(loggableReq)
 
 	var duration time.Duration
+	var wrec ResponseRecorder
+	var writeErr error
 
 	if s.shouldLogRequest(r) {
-		wrec := NewResponseRecorder(w, nil, nil)
+		wrec = NewResponseRecorder(w, nil, nil)
 		w = wrec
 
 		// wrap the request body in a LengthReader
@@ -572,7 +659,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
 			bodyReader = &lengthReader{Source: r.Body}
 			r.Body = bodyReader
-
 			// should always be true, private interface can only be referenced in the same package
 			if setReadSizer, ok := wrec.(interface{ setReadSize(*int) }); ok {
 				setReadSizer.setReadSize(&bodyReader.Length)
@@ -582,7 +668,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// capture the original version of the request
 		accLog := s.accessLogger.WithLazy(loggableReq)
 
-		defer s.logRequest(accLog, r, wrec, &duration, repl, bodyReader, shouldLogCredentials)
+		defer s.logRequest(accLog, r, wrec, &duration, &writeErr, repl, bodyReader, shouldLogCredentials)
+
+		// if the request went past the write timeout, flush so the access log can
+		// see the write error. deferred because flushing before the error routes
+		// run would commit a 200 and lose the error status. it sits after the
+		// access log defer so it still runs first.
+		defer func() {
+			if s.WriteTimeout <= 0 ||
+				r.ProtoMajor != 1 ||
+				duration < time.Duration(s.WriteTimeout) {
+				return
+			}
+			// over wrec, not the rc above: this reaches the recorder's
+			// FlushError, which skips buffered responses (#6144); rc sits
+			// below the recorder and would flush them anyway.
+			flushErr := http.NewResponseController(wrec).Flush()
+			if flushErr != nil &&
+				!errors.Is(flushErr, http.ErrHijacked) &&
+				!errors.Is(flushErr, http.ErrNotSupported) {
+				writeErr = flushErr
+			}
+		}()
 	}
 
 	// guarantee ACME HTTP challenges; handle them separately from any user-defined handlers
@@ -953,11 +1060,10 @@ func (s *Server) serveHTTP3(addr caddy.NetworkAddress, tlsCfg *tls.Config) error
 			Handler:        s,
 			TLSConfig:      tlsCfg,
 			MaxHeaderBytes: s.MaxHeaderBytes,
-			QUICConfig: &quic.Config{
-				Versions:          []quic.Version{quic.Version1, quic.Version2},
-				InitialPacketSize: 1200,
-				Tracer:            h3qlog.DefaultConnectionTracer,
-			},
+			// QUICConfig is deliberately unset: http3.Server only reads it when it
+			// creates its own listener (ListenAndServe/Serve). We bring our own
+			// listener and call ServeListener, so anything set here is ignored.
+			// The QUIC settings that actually apply are in NetworkAddress.ListenQUIC.
 			IdleTimeout: time.Duration(s.IdleTimeout),
 		}
 	}
@@ -1110,7 +1216,7 @@ func (s *Server) logTrace(mh MiddlewareHandler) {
 
 // logRequest logs the request to access logs, unless skipped.
 func (s *Server) logRequest(
-	accLog *zap.Logger, r *http.Request, wrec ResponseRecorder, duration *time.Duration,
+	accLog *zap.Logger, r *http.Request, wrec ResponseRecorder, duration *time.Duration, writeErr *error,
 	repl *caddy.Replacer, bodyReader *lengthReader, shouldLogCredentials bool,
 ) {
 	ctx := r.Context()
@@ -1160,7 +1266,12 @@ func (s *Server) logRequest(
 
 			extra := ctx.Value(ExtraLogFieldsCtxKey).(*ExtraLogFields)
 
+			hasWriteErr := writeErr != nil && *writeErr != nil
+
 			fieldCount := 6
+			if hasWriteErr {
+				fieldCount++
+			}
 			fields = make([]zapcore.Field, 0, fieldCount+len(extra.fields))
 			fields = append(
 				fields,
@@ -1174,6 +1285,9 @@ func (s *Server) logRequest(
 					ShouldLogCredentials: shouldLogCredentials,
 				}),
 			)
+			if hasWriteErr {
+				fields = append(fields, zap.NamedError("write_error", *writeErr))
+			}
 			fields = append(fields, extra.fields...)
 		}
 
