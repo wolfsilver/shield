@@ -586,7 +586,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeHardDeadline = start.Add(time.Duration(s.WriteTimeout))
 	}
 	if s.ReadIdleTimeout > 0 && r.Body != nil {
-		r.Body = &IdleTimeoutReader{
+		idleReader := &IdleTimeoutReader{
 			ReadCloser: r.Body,
 			Ctrl:       rc,
 			Deadline: IdleDeadline{
@@ -595,11 +595,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				MinRate:      s.ReadMinRate,
 				HardDeadline: readHardDeadline,
 			},
-			Logger: s.logger,
+			Logger:        s.logger,
+			DrainDeadline: r.ProtoMajor == 1 && r.ContentLength != 0,
 		}
+		defer idleReader.HandlerDone()
+		r.Body = idleReader
 	}
 	if s.WriteIdleTimeout > 0 {
-		w = &IdleTimeoutWriter{
+		idleWriter := &IdleTimeoutWriter{
 			ResponseWriterWrapper: &ResponseWriterWrapper{ResponseWriter: w},
 			Ctrl:                  rc,
 			Deadline: IdleDeadline{
@@ -608,9 +611,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				MinRate:      s.WriteMinRate,
 				HardDeadline: writeHardDeadline,
 			},
-			MaxChunk: s.MaxWriteChunk,
-			Logger:   s.logger,
+			MaxChunk:           s.MaxWriteChunk,
+			Logger:             s.logger,
+			ClearBetweenWrites: r.ProtoMajor == 2,
 		}
+		defer idleWriter.HandlerDone()
+		w = idleWriter
 	}
 
 	// set the Server header
